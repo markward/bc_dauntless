@@ -1,0 +1,3607 @@
+{
+ "format": 1,
+ "generator": "tools/gen_stock_manifest.py",
+ "hash": "blake2b-128",
+ "modules": {
+  "AI/Compound/BasicAttack.pyc": [
+   "d4bae561266e4f7f5bea82e7c4377345"
+  ],
+  "AI/Compound/CallDamageAI.pyc": [
+   "b63b7c125194de580fc2fefdb3bd9fc2"
+  ],
+  "AI/Compound/ChainFollow.pyc": [
+   "c17637cd36e748783c9b003d0051635e"
+  ],
+  "AI/Compound/ChainFollowThroughWarp.pyc": [
+   "65e5ee9810b18d5293765a47e6d74ab4"
+  ],
+  "AI/Compound/CloakAttack.pyc": [
+   "082f1c8dacd7d561d37426757d61950a"
+  ],
+  "AI/Compound/CloakAttackWrapper.pyc": [
+   "e0b126de7d10903de9264f1a74657e48"
+  ],
+  "AI/Compound/Defend.pyc": [
+   "1d61a4e0967c297b1c3c760c1eb7bb43"
+  ],
+  "AI/Compound/DockWithStarbase.pyc": [
+   "860db5300a48ec8b967f9e21f9b3993c"
+  ],
+  "AI/Compound/FedAttack.pyc": [
+   "67f79c61790a7b364747961c99f2df30"
+  ],
+  "AI/Compound/FollowThroughWarp.pyc": [
+   "fd72620eaa16dd36c8fc2dc7c2d69fd9"
+  ],
+  "AI/Compound/NonFedAttack.pyc": [
+   "d7c77307328256badd610bf1f449aa19"
+  ],
+  "AI/Compound/Parts/EvadeTorps.pyc": [
+   "b5acc4032ab2f9caf596aab5379f5161"
+  ],
+  "AI/Compound/Parts/ICOMove.pyc": [
+   "dd9628ac35641a599f565db78c6b7de5"
+  ],
+  "AI/Compound/Parts/NoSensorsEvasive.pyc": [
+   "0f4d0d0d5823f504ea257e6de6cc24c6"
+  ],
+  "AI/Compound/Parts/SweepPhasers.pyc": [
+   "2f7a5311bfd15531fecb4203d7b7d997"
+  ],
+  "AI/Compound/Parts/WarpBeforeDeath.pyc": [
+   "fa79ae9ef865cf9cca82e057177ee02e"
+  ],
+  "AI/Compound/Parts/__init__.pyc": [
+   "116331212d25d008660a795b6095a8bf"
+  ],
+  "AI/Compound/StarbaseAttack.pyc": [
+   "167ef4cc6a6e1a77fed88ddc5492c403"
+  ],
+  "AI/Compound/TractorDockTargets.pyc": [
+   "20bb214a7e50a0c4f68a2ad9f974ee14"
+  ],
+  "AI/Compound/UndockFromStarbase.pyc": [
+   "8dfe3baf92f67e4feac98e0f60ad95f3"
+  ],
+  "AI/Compound/__init__.pyc": [
+   "539c0799a847b29d73a6d1749bd9a0fb"
+  ],
+  "AI/Fleet/DefendTarget.pyc": [
+   "62e568321cdeb9e02545c0fb2dc0a784"
+  ],
+  "AI/Fleet/DestroyTarget.pyc": [
+   "4c94b4f7c37b0c97e07c788d98cd8829"
+  ],
+  "AI/Fleet/DisableTarget.pyc": [
+   "a9825f6f0513fdb0123d47e289f9082d"
+  ],
+  "AI/Fleet/DockStarbase.pyc": [
+   "075b6310da39ef20bec88a3776bf3ee5"
+  ],
+  "AI/Fleet/HelpMe.pyc": [
+   "0f0677267c3f136425fa3ce902902ec4"
+  ],
+  "AI/Fleet/__init__.pyc": [
+   "ab4bb032560a0429aaf914f57a6487ec"
+  ],
+  "AI/PlainAI/BaseAI.pyc": [
+   "174474afd8e371e5b617b449df161794"
+  ],
+  "AI/PlainAI/CircleObject.pyc": [
+   "d5ec8e5ad216000442eb9f620851868b"
+  ],
+  "AI/PlainAI/Defensive.pyc": [
+   "e9efe417b9c82a2a789c1fb87bf703df"
+  ],
+  "AI/PlainAI/EvadeTorps.pyc": [
+   "76930bc5a47b35b346264bdbf42e326c"
+  ],
+  "AI/PlainAI/EvilShuttleDocking.pyc": [
+   "d4595d2229e50ee189e1f720a596be49"
+  ],
+  "AI/PlainAI/Flee.pyc": [
+   "ccb5cc118702a2bc35b3c19b5cb0769f"
+  ],
+  "AI/PlainAI/FollowObject.pyc": [
+   "56e962e3f409c2eb2b2be08fd1512814"
+  ],
+  "AI/PlainAI/FollowThroughWarp.pyc": [
+   "2070f88cdfaec00f410747a4bed6734c"
+  ],
+  "AI/PlainAI/FollowWaypoints.pyc": [
+   "baa051c4a89331c093524e49975817d7"
+  ],
+  "AI/PlainAI/GoForward.pyc": [
+   "0acf61a337f41ebd2b8681a6e7632ddf"
+  ],
+  "AI/PlainAI/IntelligentCircleObject.pyc": [
+   "9c785a9d913249399a350e689d6eed39"
+  ],
+  "AI/PlainAI/Intercept.pyc": [
+   "3ea8be0d7d4c5a5ff4de3948b863434a"
+  ],
+  "AI/PlainAI/ManeuverLoop.pyc": [
+   "1e8550217d506331794ea078ac440577"
+  ],
+  "AI/PlainAI/MoveToObjectSide.pyc": [
+   "3033233267c054a497c2c50c1672798c"
+  ],
+  "AI/PlainAI/PhaserSweep.pyc": [
+   "b05d14a9341cb3c4d7f208b03905ec3c"
+  ],
+  "AI/PlainAI/Ram.pyc": [
+   "4d178e2850e43a4ad623937c3603c875"
+  ],
+  "AI/PlainAI/RunAction.pyc": [
+   "12db3800a2076d8107f65188cb63aae4"
+  ],
+  "AI/PlainAI/RunScript.pyc": [
+   "3031a7ef4c2463111605bd6efce29700"
+  ],
+  "AI/PlainAI/SelfDestruct.pyc": [
+   "6cb94c18dae91bb8519d6836ab264b90"
+  ],
+  "AI/PlainAI/StarbaseAttack.pyc": [
+   "ea19c24a2b460ade1035bc1ca2f23589"
+  ],
+  "AI/PlainAI/StationaryAttack.pyc": [
+   "03519b6f377b7c6aa2ba9418f9497988"
+  ],
+  "AI/PlainAI/Stay.pyc": [
+   "a059025a801616138fef14929a7b1b78"
+  ],
+  "AI/PlainAI/TorpedoRun.pyc": [
+   "d62c7ed94859c862fe2f410f69abdcc4"
+  ],
+  "AI/PlainAI/TriggerEvent.pyc": [
+   "2ffabfe314972b5cb061b0893013cf61"
+  ],
+  "AI/PlainAI/TurnToOrientation.pyc": [
+   "8a3d148fe051cf5615eb50f1247b3e4e"
+  ],
+  "AI/PlainAI/Warp.pyc": [
+   "17ae8ba9aca911c08bc3cb7fde0e0a34"
+  ],
+  "AI/PlainAI/__init__.pyc": [
+   "b07cf92d0e67930441327d75ad29d399"
+  ],
+  "AI/Player/Defense.pyc": [
+   "8cd82f650e989e34ef847278605c1a09"
+  ],
+  "AI/Player/DefenseNoTarget.pyc": [
+   "1b44d54f4e1621aebdac16adc270ec77"
+  ],
+  "AI/Player/DestroyAft.pyc": [
+   "72a1b8cd0d887c4b2931eeb8d03a66ca"
+  ],
+  "AI/Player/DestroyAftSeparate.pyc": [
+   "112c18332bc0a9eb2dc475bf514f83cc"
+  ],
+  "AI/Player/DestroyFaceSide.pyc": [
+   "4a3821347536acd2a382857cc95b41c2"
+  ],
+  "AI/Player/DestroyFore.pyc": [
+   "d5573dfdb2a013b1e71ef5d19d253cc0"
+  ],
+  "AI/Player/DestroyForeClose.pyc": [
+   "52c8fc1c4d8c4fbc976b2a3a8dfc2bd8"
+  ],
+  "AI/Player/DestroyFreely.pyc": [
+   "79bf52e02bc48245e216a13c6c5009ff"
+  ],
+  "AI/Player/DestroyFreelyClose.pyc": [
+   "8195d9e3f5c7adf38377d58b672937ca"
+  ],
+  "AI/Player/DestroyFreelyMaintain.pyc": [
+   "dfaa96a99ecfc9be0ac31fd4a95a84b3"
+  ],
+  "AI/Player/DestroyFreelySeparate.pyc": [
+   "2bd1e51211d0fa31e7ca2c67a31caba9"
+  ],
+  "AI/Player/DestroyFromSide.pyc": [
+   "fb0c5a11ec46133a38275b13efa69fe0"
+  ],
+  "AI/Player/DisableAft.pyc": [
+   "f086fe248cec249dd00cad4804d3e018"
+  ],
+  "AI/Player/DisableAftSeparate.pyc": [
+   "03bf772e999b951041df5e9d896f59c9"
+  ],
+  "AI/Player/DisableFaceSide.pyc": [
+   "6bfd0c44331a9c961979ca122fb64964"
+  ],
+  "AI/Player/DisableFore.pyc": [
+   "7f2944120e110fb3379bcc72450b9a34"
+  ],
+  "AI/Player/DisableForeClose.pyc": [
+   "60243e5d15b6050f5bb7e7ef8bf8453a"
+  ],
+  "AI/Player/DisableFreely.pyc": [
+   "01623a50ec05cc4b8414a5880eff8f63"
+  ],
+  "AI/Player/DisableFreelyClose.pyc": [
+   "1d531f4522df69c403451f8c3f9f54c5"
+  ],
+  "AI/Player/DisableFreelyMaintain.pyc": [
+   "c6f8685a25b63fe8cedb9ef19a9a9940"
+  ],
+  "AI/Player/DisableFreelySeparate.pyc": [
+   "d8d56f7cdeeea3e5517a3b189396d1fd"
+  ],
+  "AI/Player/DisableFromSide.pyc": [
+   "e550678417b51d24bbb1b0e17c5c158e"
+  ],
+  "AI/Player/FlyForward.pyc": [
+   "1e8e1e44effcfdd9b2401d18caef423a"
+  ],
+  "AI/Player/InterceptTarget.pyc": [
+   "4a52449926f50be4b63d65e0988ebb33"
+  ],
+  "AI/Player/OrbitPlanet.pyc": [
+   "cce44687032f975d837c65b4eabeb037"
+  ],
+  "AI/Player/PlayerWarp.pyc": [
+   "53d96f48f321d5bad520ef9c10abdf69"
+  ],
+  "AI/Player/Stay.pyc": [
+   "1d2dd82423d3eb5c8d494cad1492741b"
+  ],
+  "AI/Player/StaySelectTarget.pyc": [
+   "6622ace29d833c86d3040fb64e5c9a7a"
+  ],
+  "AI/Player/__init__.pyc": [
+   "9f6de4597224840d48538982799e3a1d"
+  ],
+  "AI/Preprocessors.pyc": [
+   "3d9483c7255f1c5e5b7f22afdb80ebe8"
+  ],
+  "AI/Setup.pyc": [
+   "ad38b25a21a5a67cd689a50c1227e1e9"
+  ],
+  "AI/__init__.pyc": [
+   "15c2e8f54210f22f4638e44b71679230"
+  ],
+  "Actions/CameraScriptActions.pyc": [
+   "1ad7063f925c3fe281b2e5a93055bbe6"
+  ],
+  "Actions/EffectScriptActions.pyc": [
+   "c0fc017ba2bd4bb318a9224e0fedb767"
+  ],
+  "Actions/MissionScriptActions.pyc": [
+   "f460971d62c548bda059a059729085bb"
+  ],
+  "Actions/ShipScriptActions.pyc": [
+   "56bea53007da25a2bc89fe6da6a8d324"
+  ],
+  "Actions/__init__.pyc": [
+   "89cdfb71c324544b363003c96a9b0909"
+  ],
+  "Autoexec.pyc": [
+   "e5b664aa3ddc702be7ab36c43179ae9b"
+  ],
+  "Bridge/BridgeMenus.pyc": [
+   "23d7c4c4746151da4f4543eaea466910"
+  ],
+  "Bridge/BridgeUtils.pyc": [
+   "9a3cc5bff4d65bd3dacc6f27dc64653c"
+  ],
+  "Bridge/Characters/Admiral_Liu.pyc": [
+   "f9db67f414b4ea7c70a331719da8fb1a"
+  ],
+  "Bridge/Characters/Barel.pyc": [
+   "ec58ee60e12f711a98cfcb85b0304944"
+  ],
+  "Bridge/Characters/Brex.pyc": [
+   "1db7ad9257675215d7e1d060abb2dc51"
+  ],
+  "Bridge/Characters/CardCapt.pyc": [
+   "c8e722a711ba81bdfd8bb3b6316b02e9"
+  ],
+  "Bridge/Characters/CharacterPaths.pyc": [
+   "f0ee57b460745a9ab71b6ceecbbd2816"
+  ],
+  "Bridge/Characters/CommonAnimations.pyc": [
+   "83c455a1c5d756deadaed0f87c0f72b3"
+  ],
+  "Bridge/Characters/Data.pyc": [
+   "87dd859fd5257d632b2aef0d7b588ed7"
+  ],
+  "Bridge/Characters/Dawson.pyc": [
+   "0ea83b24cf7d70d2370c5f66b8e45ceb"
+  ],
+  "Bridge/Characters/Draxon.pyc": [
+   "dee6c703e3b8a486c066994a77d1a9de"
+  ],
+  "Bridge/Characters/Felix.pyc": [
+   "62e35eaaa0689ca6e195b501ed3f3f8f"
+  ],
+  "Bridge/Characters/FemaleExtra1.pyc": [
+   "5e9a229a7271cb32228e7d0a937952a4"
+  ],
+  "Bridge/Characters/FemaleExtra2.pyc": [
+   "51f9f4d9209707bda2a7c88567f77370"
+  ],
+  "Bridge/Characters/FemaleExtra3.pyc": [
+   "b834b9da1d5c38dfd75d6b5fce24755e"
+  ],
+  "Bridge/Characters/Graff.pyc": [
+   "3247c997267f3a60a69d7de854d6170b"
+  ],
+  "Bridge/Characters/Guest.pyc": [
+   "eccb92b74c8d3a47b328d033ad60952e"
+  ],
+  "Bridge/Characters/Haley.pyc": [
+   "b184f29096a8d7e3178ff76c74960024"
+  ],
+  "Bridge/Characters/Hanson.pyc": [
+   "a363c3dc42fb713a38996f9f7d2c3e2a"
+  ],
+  "Bridge/Characters/Jadeja.pyc": [
+   "9369a902cc64a2ff67a8c9d53486cd52"
+  ],
+  "Bridge/Characters/Kartok.pyc": [
+   "22e1417b99d69b300c5ba53ab05102a3"
+  ],
+  "Bridge/Characters/Kessok.pyc": [
+   "28d2068c8c7e22c45e5551cbf3ae321e"
+  ],
+  "Bridge/Characters/Kiska.pyc": [
+   "c2992efa1af6651b31607851c79cb272"
+  ],
+  "Bridge/Characters/Korbus.pyc": [
+   "c65df8ee4d85e99d90827f26dfe5b138"
+  ],
+  "Bridge/Characters/LargeAnimations.pyc": [
+   "500bac9c98ca79f9fad3b15901f5c4b9"
+  ],
+  "Bridge/Characters/MacCray.pyc": [
+   "2d2f54b7b845382f643445cb3e0b0b96"
+  ],
+  "Bridge/Characters/MaleExtra1.pyc": [
+   "26a0ab530a21f229db5921f9a79cf572"
+  ],
+  "Bridge/Characters/MaleExtra2.pyc": [
+   "89ae22064d36827199f5d285b9b60583"
+  ],
+  "Bridge/Characters/MaleExtra3.pyc": [
+   "95e322aebbe27eb8e4377039991d6a86"
+  ],
+  "Bridge/Characters/Martin.pyc": [
+   "cf553dace87b2dce5308a864f7ce7756"
+  ],
+  "Bridge/Characters/Matan.pyc": [
+   "77f620a1a90faa3ed9bdc18236248d41"
+  ],
+  "Bridge/Characters/MediumAnimations.pyc": [
+   "bb82c8a3b095eef16a3ff22d519d0c69"
+  ],
+  "Bridge/Characters/Miguel.pyc": [
+   "a29fa47890565aa1337a5210376da085"
+  ],
+  "Bridge/Characters/Oben.pyc": [
+   "a5e583bc3e42306ec0e9c297e455c8fa"
+  ],
+  "Bridge/Characters/Picard.pyc": [
+   "0fd2e885ca5b513599afdb44520a95ee"
+  ],
+  "Bridge/Characters/PicardAnimations.pyc": [
+   "bf1a0e086626567a9a2c1e32e427d1d4"
+  ],
+  "Bridge/Characters/Praag.pyc": [
+   "3aec4ef46136b8a986f0f9b4528afb05"
+  ],
+  "Bridge/Characters/Saalek.pyc": [
+   "0f810cc97f27437ded5577f77fe72f65"
+  ],
+  "Bridge/Characters/Saffi.pyc": [
+   "bbd9f71ed48ea6addd88f484cbacb18e"
+  ],
+  "Bridge/Characters/Sek.pyc": [
+   "7f557f38fdbc2b9b27de2368a491c3cd"
+  ],
+  "Bridge/Characters/SharedAnimations.pyc": [
+   "b9129a046241536f134e199beec9719a"
+  ],
+  "Bridge/Characters/SmallAnimations.pyc": [
+   "0dff6076f75cf28028a254c140a30f45"
+  ],
+  "Bridge/Characters/Soams.pyc": [
+   "f48ae6ea10d261cbfe6b29378450f133"
+  ],
+  "Bridge/Characters/Soto.pyc": [
+   "cafdf332a2612b45d1dde04b4c225068"
+  ],
+  "Bridge/Characters/Takahara.pyc": [
+   "76a71af6078ee31cc5121370fa899ff6"
+  ],
+  "Bridge/Characters/Terrik.pyc": [
+   "8013b81204661c0a1afef682c434ddbb"
+  ],
+  "Bridge/Characters/Torenn.pyc": [
+   "3533646da5f04732f5ee5acdcdd0f626"
+  ],
+  "Bridge/Characters/Verata.pyc": [
+   "ed98744891e35e652ed8b92cf30df972"
+  ],
+  "Bridge/Characters/Willis.pyc": [
+   "122883bb1a7511c45bd78a9595b2fb5b"
+  ],
+  "Bridge/Characters/Yi.pyc": [
+   "8ecad8a4fb91711e917eb0d5d9fd1a8d"
+  ],
+  "Bridge/Characters/Zeiss.pyc": [
+   "ec94f5e37f2afc656e775e32688d12d6"
+  ],
+  "Bridge/Characters/__init__.pyc": [
+   "e95a45370e1edc69ada8399ed61f6473"
+  ],
+  "Bridge/DataMenuHandlers.pyc": [
+   "cd7c6b53b13a8ccd11259e39e36992b9"
+  ],
+  "Bridge/EBridgeProperties.pyc": [
+   "774543981a04139e096d6ba93b8d045e"
+  ],
+  "Bridge/EngineerCharacterHandlers.pyc": [
+   "58965164cb9efe9316a93edb69b49e09"
+  ],
+  "Bridge/EngineerMenuHandlers.pyc": [
+   "8b99c348c2f9e7ce24655c03b426c214"
+  ],
+  "Bridge/GalaxyBridge.pyc": [
+   "cbc89a124b01c4b74d0ad561da11c253"
+  ],
+  "Bridge/HelmCharacterHandlers.pyc": [
+   "b87658bb5301735999cf47f1465ebc2d"
+  ],
+  "Bridge/HelmMenuHandlers.pyc": [
+   "a83d3bd9d20442bef9dc03fae8851974"
+  ],
+  "Bridge/PicardMenuHandlers.pyc": [
+   "bed5b496b91e5edb6654d260f1c0e466"
+  ],
+  "Bridge/PowerDisplay.pyc": [
+   "da2d62cd0509de618d589ea7878ef400"
+  ],
+  "Bridge/SaalekMenuHandlers.pyc": [
+   "27b40c88a7d33f93db7a8d6e8cf26403"
+  ],
+  "Bridge/ScienceCharacterHandlers.pyc": [
+   "8ba3cd8139eb6422aadc883a50a27e8b"
+  ],
+  "Bridge/ScienceMenuHandlers.pyc": [
+   "1f2031b7a32acbe05a8bb317f0c98195"
+  ],
+  "Bridge/SovereignBridge.pyc": [
+   "7bc7023b748028bde1abaf91327c18c6"
+  ],
+  "Bridge/TacticalCharacterHandlers.pyc": [
+   "0996990694380f1148ed25c21513d8be"
+  ],
+  "Bridge/TacticalMenuHandlers.pyc": [
+   "879c7955f334a8162269e869da5d979a"
+  ],
+  "Bridge/XOCharacterHandlers.pyc": [
+   "dc4e30a8e9a70a678237069b06525dcb"
+  ],
+  "Bridge/XOMenuHandlers.pyc": [
+   "d96907e7152f8cd377facd75ee5f8a91"
+  ],
+  "Bridge/__init__.pyc": [
+   "738dd3eb7506808212409ba14833a938"
+  ],
+  "Bridge/bridgeeffects.pyc": [
+   "a83066516222d7fc139ef2422ff9a0f7"
+  ],
+  "Bridge/dbridgeproperties.pyc": [
+   "83b35abea8e4acd34b7cff876e1d7bc4"
+  ],
+  "BridgeHandlers.pyc": [
+   "b41350eeef216b292f73778b8111d2e3"
+  ],
+  "Camera.pyc": [
+   "058576bf500c2760f2b93e2d03078b91"
+  ],
+  "CameraModes.pyc": [
+   "5f40da1aa2c820c2ac34645654d5eda1"
+  ],
+  "CharacterMenuInterfaceHandlers.pyc": [
+   "ee45e14683fda003f8a7976061569fb9"
+  ],
+  "CinematicInterfaceHandlers.pyc": [
+   "51aaa939b166dd63a3f59379eb0860c5"
+  ],
+  "Conditions/ConditionAllInSameSet.pyc": [
+   "62ada2e152d0534c7d2b17bdfcff2089"
+  ],
+  "Conditions/ConditionAnyInSameSet.pyc": [
+   "34f067931a0399a2ca2306bbaf2c1bd9"
+  ],
+  "Conditions/ConditionAttacked.pyc": [
+   "80a3ed253109f785e573c1720159853a"
+  ],
+  "Conditions/ConditionAttackedBy.pyc": [
+   "7d1f84ca3bbf2bed64d04bd44cca43aa"
+  ],
+  "Conditions/ConditionCriticalSystemBelow.pyc": [
+   "c1c12ec5853f2a84c82f9a5ea5204979"
+  ],
+  "Conditions/ConditionDestroyed.pyc": [
+   "9c8f0a069b90fcfc55fd124fcb9dddf7"
+  ],
+  "Conditions/ConditionDifficultyAt.pyc": [
+   "7ce5ece14f9ccc5aeafa9a73f04aadec"
+  ],
+  "Conditions/ConditionExists.pyc": [
+   "3e9562d44df3d383cadb52137e37f261"
+  ],
+  "Conditions/ConditionFacingToward.pyc": [
+   "4c001d31d5f07746687da76ebafae770"
+  ],
+  "Conditions/ConditionFiringTractorBeam.pyc": [
+   "d5f58986a630ab6d70d795c01be63817"
+  ],
+  "Conditions/ConditionFlagSet.pyc": [
+   "1c3011e2ee79ff7d96f68e788e8b50c4"
+  ],
+  "Conditions/ConditionInLineOfSight.pyc": [
+   "a8331f05252f5c37ac8fd15c6ecbf621"
+  ],
+  "Conditions/ConditionInNebula.pyc": [
+   "e8a49e64af20cefe174da42b4973afc0"
+  ],
+  "Conditions/ConditionInPhaserFiringArc.pyc": [
+   "eafd417c96d1a5bbbfbb4bffe0c5bbe1"
+  ],
+  "Conditions/ConditionInRange.pyc": [
+   "87ee273d2ef36d53e951a58ddb243a01"
+  ],
+  "Conditions/ConditionInSet.pyc": [
+   "3d7732e2271d341931428bb7b50e6882"
+  ],
+  "Conditions/ConditionIncomingTorps.pyc": [
+   "9dcb3f595f1828ab3b0ca36d7e75076b"
+  ],
+  "Conditions/ConditionMissionEvent.pyc": [
+   "8570f1a910866608a50d94f8fb78f4fb"
+  ],
+  "Conditions/ConditionPlayerOrbitting.pyc": [
+   "1e0fed79d1455fe6b74adda5064fefab"
+  ],
+  "Conditions/ConditionPowerBelow.pyc": [
+   "ea151dec4f52c5fe08c31cd82b635192"
+  ],
+  "Conditions/ConditionPulseReady.pyc": [
+   "385eeaa2e83a945285b4682c96e8fbd2"
+  ],
+  "Conditions/ConditionReachedWaypoint.pyc": [
+   "53ce8ace135feae3e615d7a5626b2452"
+  ],
+  "Conditions/ConditionShipDisabled.pyc": [
+   "98567f8463ce59ecc9344823f48500c2"
+  ],
+  "Conditions/ConditionSingleShieldBelow.pyc": [
+   "71824702d6cbbe8c65ab72ec32a5d0fa"
+  ],
+  "Conditions/ConditionSystemBelow.pyc": [
+   "b82038a35a635c9b7353279d9f0b35b0"
+  ],
+  "Conditions/ConditionSystemDestroyed.pyc": [
+   "a2c5b9de0f97f747aae2bd8eced5cd25"
+  ],
+  "Conditions/ConditionSystemDisabled.pyc": [
+   "372e472e49771d99fef0a27f43a098ad"
+  ],
+  "Conditions/ConditionTimer.pyc": [
+   "27c45b26d0c8b84923180a4ce7b73959"
+  ],
+  "Conditions/ConditionTorpsReady.pyc": [
+   "d3e9da7f37e6f1bb97bd69c2cbcfab54"
+  ],
+  "Conditions/ConditionUsingWeapon.pyc": [
+   "6390292d0fa5dc11b88bc0c531b856ef"
+  ],
+  "Conditions/ConditionWarpingToMission.pyc": [
+   "62ca49cb8308f4fbfaa841e38a7df236"
+  ],
+  "Conditions/ConditionWarpingToSet.pyc": [
+   "bc99f55d9008a823f823140083d83423"
+  ],
+  "Conditions/FriendliesInPlayerSetStronger.pyc": [
+   "b0b07d8911ebfbd9ccd8d9f55da1c7f6"
+  ],
+  "Conditions/__init__.pyc": [
+   "7499c0e9d50ff1b07d460d855d196829"
+  ],
+  "DefaultKeyboardBinding.pyc": [
+   "c6926a48e440658e02a8ec4188023e24"
+  ],
+  "Display.pyc": [
+   "0fc5165eba3d2e7ff325c4621e13b73e"
+  ],
+  "DynamicMusic.pyc": [
+   "531b795b90e873193aa0ff5acb9f6208"
+  ],
+  "Effects.pyc": [
+   "b25b7f4f5b288e55abe29711b4cd2982"
+  ],
+  "FillGauge.pyc": [
+   "49fb456cec67bf613dcfd42dda87b4e9"
+  ],
+  "FixApp.pyc": [
+   "02e37705bbca2800e81be96d9b078ff9"
+  ],
+  "GlobalPropertyTemplates.pyc": [
+   "89079242045102e8f97a9bb1091e480c"
+  ],
+  "Icons/Arial.pyc": [
+   "15af84d81145608f1f0d6c2586825a9e"
+  ],
+  "Icons/Console.pyc": [
+   "12a2b3947578caac5d81f56e25ba7bb1"
+  ],
+  "Icons/Crillee12.pyc": [
+   "a56700611179eed6a2f78dd275729ba2"
+  ],
+  "Icons/Crillee15.pyc": [
+   "b493a60b2263b1abe9517c6108fb52fd"
+  ],
+  "Icons/Crillee5.pyc": [
+   "56239dd1c66499001244559d2f91cf8f"
+  ],
+  "Icons/Crillee6.pyc": [
+   "c058877250b03b98264a40042ce4385e"
+  ],
+  "Icons/Crillee9.pyc": [
+   "23854d7a3c66ae3bf933f573b8c1f871"
+  ],
+  "Icons/DamageIcons.pyc": [
+   "b3c8d9548adef15bbaf5675a523c6f2a"
+  ],
+  "Icons/FontsAndIcons.pyc": [
+   "05e253f744b35cf98cbebbaac35b581c"
+  ],
+  "Icons/Frame.pyc": [
+   "cd252949639370e9190a02cf2cff9563"
+  ],
+  "Icons/FrameButton.pyc": [
+   "60593a6f6676bfa1ae993e884efc9d15"
+  ],
+  "Icons/LCARSText12.pyc": [
+   "b5c3e3c9636a4df0a27eeeb23fb1b4e3"
+  ],
+  "Icons/LCARSText15.pyc": [
+   "b70092c71e3e7919cb917d86bd74d53e"
+  ],
+  "Icons/LCARSText5.pyc": [
+   "fccc79a11c77e65719e44d239210b6d3"
+  ],
+  "Icons/LCARSText6.pyc": [
+   "d088b9fbcf7b9fe5af2756a45effd02c"
+  ],
+  "Icons/LCARSText9.pyc": [
+   "e367404f59f6cf5696c028acce329af0"
+  ],
+  "Icons/LCARS_1024.pyc": [
+   "f04b821bf4df361f45993769653f2c57"
+  ],
+  "Icons/LCARS_1280.pyc": [
+   "a03ae6a2011cc8e68bbd5ecdf8b072c8"
+  ],
+  "Icons/LCARS_1600.pyc": [
+   "b2efce404115e5d2fb45ddf9ab32ed77"
+  ],
+  "Icons/LCARS_640.pyc": [
+   "b3390c04051fdb300b52610c5d1e0efb"
+  ],
+  "Icons/LCARS_800.pyc": [
+   "949aac588627fc30dbcd243a182f07c2"
+  ],
+  "Icons/Serpentine12.pyc": [
+   "9be0531fa628520a413a37193bbb9bd7"
+  ],
+  "Icons/ShipIcons.pyc": [
+   "9556880e35e670735479142310356883"
+  ],
+  "Icons/SplashScreen.pyc": [
+   "5d3a63738509c234ccce4e36f735cf7a"
+  ],
+  "Icons/SystemIcons.pyc": [
+   "7bd714995ea42b8e27f5a9b66c5b2b05"
+  ],
+  "Icons/Tahoma.pyc": [
+   "698a3b4a795e9b5e2e71ca05ce75f172"
+  ],
+  "Icons/TahomaLarge.pyc": [
+   "6fe80683615945287262ea923780c1ac"
+  ],
+  "Icons/TargetArrow.pyc": [
+   "9de45e19f93e8b4025b636e6830740cc"
+  ],
+  "Icons/WeaponIcons.pyc": [
+   "a9c5413325d675c0aef2c53a7141e82c"
+  ],
+  "Icons/__init__.pyc": [
+   "d9550803502fba66304c47ecc3a70a3f"
+  ],
+  "InterfaceHandlers.pyc": [
+   "77356c09d45e9b53bf944fcb73ae9c1a"
+  ],
+  "KeyConfig.pyc": [
+   "6c4aaaa009c398bc4e42cd92721c588b"
+  ],
+  "LoadBridge.pyc": [
+   "5578fa861642c5283b1837af3c949c8d"
+  ],
+  "LoadInterface.pyc": [
+   "ec5883689e88cc7c84afa052ffe22d73"
+  ],
+  "LoadTacticalSounds.pyc": [
+   "b1868876aab55d57c3d3d35b9f4528a1"
+  ],
+  "Maelstrom/Episode1/E1M1/Dock_P.pyc": [
+   "010a03f66fdfacdb7fe7682d5afbfb5e"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1.pyc": [
+   "71eaf1bc8514f39fd16b7b0e9a430d29"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_Devore.pyc": [
+   "11deb410a1644208565cad3bbdad1fcd"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_PlayerOrbitSB.pyc": [
+   "e9a94116293f4c697737fcecc56c2251"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_SBDock.pyc": [
+   "f470fddd1a96eaaee1a02138543a38a9"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_SF.pyc": [
+   "d9b4725dc2882ffd78cf5461cb3fddbd"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_Shuttle1.pyc": [
+   "f010323d83e54e681ddaa3b308f4cfa4"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_Shuttle2.pyc": [
+   "4afeae6d7c12ba7a39f3752df864c236"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_Shuttle3.pyc": [
+   "ca32e21a30fa00f92f400d0ef44f2f32"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_AI_Stay.pyc": [
+   "2d5eaf2855f0ef92cf8d18b133b4169b"
+  ],
+  "Maelstrom/Episode1/E1M1/E1M1_Starbase12_P.pyc": [
+   "e502f60a52abfe0c428428d23fd22192"
+  ],
+  "Maelstrom/Episode1/E1M1/UndockAI.pyc": [
+   "f19fefca8a7950ca2068a21c78a8a977"
+  ],
+  "Maelstrom/Episode1/E1M1/__init__.pyc": [
+   "95cc3ef0e8a67b90849cfadd3a56f2f1"
+  ],
+  "Maelstrom/Episode1/E1M2/E1M2.pyc": [
+   "2e660e6bb2dffa02ac94d687f6fbff11"
+  ],
+  "Maelstrom/Episode1/E1M2/E1M2_AI_Intercept.pyc": [
+   "abc645df2e3bea3867bdae0ea2c5a515"
+  ],
+  "Maelstrom/Episode1/E1M2/E1M2_Vesuvi6_P.pyc": [
+   "2ddb79588fbee7f765d28ad47db56868"
+  ],
+  "Maelstrom/Episode1/E1M2/__init__.pyc": [
+   "5f1448b283be0743f7ec0fa3eb5065d3"
+  ],
+  "Maelstrom/Episode1/Episode1.pyc": [
+   "4a1c5d62a2c53a7b7c2a7fbf9ba413ab"
+  ],
+  "Maelstrom/Episode1/__init__.pyc": [
+   "0246ddb8513595cc28f00027725cd9b4"
+  ],
+  "Maelstrom/Episode2/AI_WarpOut.pyc": [
+   "d9ad20e68ab1e68d9ee099f1eccdd657"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0.pyc": [
+   "f653988497f8cf2d821ecb6073472d7a"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_CloakAttack.pyc": [
+   "b119eb2100cdf1deb1db2b249cf55e97"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_FedWarpOut.pyc": [
+   "60325d14bf31bd2b6526d013cd3bcc50"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_Klingon.pyc": [
+   "46c178b0140f8cf72d7989b98ba55e17"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_KlingonTransfer.pyc": [
+   "69843ba898a5170ff664baa2ca524c5f"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_OrbitSov.pyc": [
+   "856e728da5ccd13e98254e5d7e0505f1"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_Sovereign.pyc": [
+   "1b912a6596725f83919ba76837a9bfac"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_Warbird.pyc": [
+   "58d9bb7d9b4b3227f6f93df868043ebe"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_WarbirdWarp.pyc": [
+   "10d82f02dd2932b9b6503d7779c79a3d"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_AI_Zhukov.pyc": [
+   "2ff07dec21379fd6c0083272d1afa45a"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_Starbase12_P.pyc": [
+   "bd0b0f8041f159ba74ba8f03732d7f8e"
+  ],
+  "Maelstrom/Episode2/E2M0/E2M0_Tevron2_P.pyc": [
+   "9e3db503129f1349f186dcf9442ee8cd"
+  ],
+  "Maelstrom/Episode2/E2M0/__init__.pyc": [
+   "80609dc83095a29d548a616e095be8d7"
+  ],
+  "Maelstrom/Episode2/E2M1/Cut_AI_Galaxy_Tevron.pyc": [
+   "1fcbdd1bb1e711a5222dfc7a898d6534"
+  ],
+  "Maelstrom/Episode2/E2M1/DBridge_P.pyc": [
+   "c99987c8f51af0fe06d54bcb3be2980e"
+  ],
+  "Maelstrom/Episode2/E2M1/DamagedKaroon.pyc": [
+   "b089b70977043b847330645c56d96855"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1.pyc": [
+   "5d448c9d4b31bc3739d62c5852638852"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_AI_FreightOrbit.pyc": [
+   "6a9b4e422729f14108ec3e482a65631b"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_AI_Intercept.pyc": [
+   "358a015c35e8fe4a99835d2ebc9a7195"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_AI_KaroonStay.pyc": [
+   "cc178413598f4500f82c4e1484d0c2c9"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_AI_Warbird.pyc": [
+   "939160a356c21ccd306c72ed0c74853d"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_AI_WarbirdTow.pyc": [
+   "ff280625c559a600d11959f60cf743ed"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_Beol4_P.pyc": [
+   "ec1c66af90469615b6c639079b7e020b"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_Karoon_AI.pyc": [
+   "95222b7a21a98fc5ada2b70b8c0297ee"
+  ],
+  "Maelstrom/Episode2/E2M1/E2M1_Vesuvi6_P.pyc": [
+   "4b02bb7ebf71ebe18f16c8cc09db2284"
+  ],
+  "Maelstrom/Episode2/E2M1/Ep2Cut_Tevron2_P.pyc": [
+   "fb2275ccb121959a413cd0c36ae154bf"
+  ],
+  "Maelstrom/Episode2/E2M1/Ep2Cutscene.pyc": [
+   "d49d029ad6f802c077b41d652b8aefd6"
+  ],
+  "Maelstrom/Episode2/E2M1/StationDamage.pyc": [
+   "0ae6e8edc2be93fcfcb150d196b8b697"
+  ],
+  "Maelstrom/Episode2/E2M1/__init__.pyc": [
+   "77ef9a310b30c465f8c5c9a1f9e776f2"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2.pyc": [
+   "4d249707ef45b90735aeb74dc29b4b1d"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_AI_GalorDetect.pyc": [
+   "ed2b481850011b225c3fc640383aa711"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_AI_GalorReturn.pyc": [
+   "9ede7112281087fae61c4a76cc43fde0"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_AI_GalorWarp.pyc": [
+   "cde203a0b6def5124eb9515dfc1abb09"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_AI_MarauderAttack.pyc": [
+   "098a51dbda27e1540ef65fdd86ad0664"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_AI_MarauderRun.pyc": [
+   "151d9c0c48f899f2b923c4ec35455fbf"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_AI_Stay.pyc": [
+   "93a9cacd1ef4e11a60140b93a3815e93"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_DeepSpace_P.pyc": [
+   "0af69d10bd33594927964c1ae06036bb"
+  ],
+  "Maelstrom/Episode2/E2M2/E2M2_Serris2_P.pyc": [
+   "4b2ab4b4426decd639124ebd882bf8ef"
+  ],
+  "Maelstrom/Episode2/E2M2/__init__.pyc": [
+   "c562078f0317afa019a47b4cec4a08db"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6.pyc": [
+   "e7f2a6d44a9f3d23b811cd1ae499997c"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_Bird.pyc": [
+   "e52ce21e9a084f608b4d28f97bcbdad0"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_BirdSOS.pyc": [
+   "c1d15cdccb5a3ef83cf4774af31e58ae"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_Galor1_2.pyc": [
+   "6c6241c7db463b28cb50bad9d7a5db98"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_Galor3.pyc": [
+   "b53b3b3d7f7d6cba7cce0db922b56c3f"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_Galor5_6.pyc": [
+   "19259a6244228f82f10bde58d21baf1e"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_GalorReturn.pyc": [
+   "92662e9f289cf98da4164506de084c6f"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_RanKuf.pyc": [
+   "f8a5b54044ab49157a7e1ef79602627e"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_RanKufSOS.pyc": [
+   "118498a78d7186084eb306bd17052cf3"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_AI_Station.pyc": [
+   "a5688b5097eb647bbea9482087500751"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_Biranu1_P.pyc": [
+   "1a0aad77cdf4f9fc8ebb3f4f5c6b32ec"
+  ],
+  "Maelstrom/Episode2/E2M6/E2M6_Biranu2_P.pyc": [
+   "9b83a6144444e50a8a4cf0ee6808e7de"
+  ],
+  "Maelstrom/Episode2/E2M6/__init__.pyc": [
+   "2e608e0ec2db311f5ab3e2a77efa28ba"
+  ],
+  "Maelstrom/Episode2/Episode2.pyc": [
+   "b28da2e563a615e6119f38f460ba8273"
+  ],
+  "Maelstrom/Episode2/__init__.pyc": [
+   "2ae41676a73c271ed1d744e00ce30aa9"
+  ],
+  "Maelstrom/Episode3/E3M1/BOPAI.pyc": [
+   "f05137d87467d0c6912c47453bf6f624"
+  ],
+  "Maelstrom/Episode3/E3M1/E3M1.pyc": [
+   "c339283583342b00171d9b7c9156abf7"
+  ],
+  "Maelstrom/Episode3/E3M1/E3M1NebulaAI.pyc": [
+   "7238bdd2f36f57055a3e46180fb80a4b"
+  ],
+  "Maelstrom/Episode3/E3M1/E3M1_Savoy1_P.pyc": [
+   "49ab142e34e89deacaf84a3895b63a22"
+  ],
+  "Maelstrom/Episode3/E3M1/E3M1_Savoy2_P.pyc": [
+   "85b11ce99296b70e58086e7f81c58629"
+  ],
+  "Maelstrom/Episode3/E3M1/E3M1_Savoy3_P.pyc": [
+   "005515cc1b3e4d2c30c1cefe6122bca1"
+  ],
+  "Maelstrom/Episode3/E3M1/E3M1_Starbase12_P.pyc": [
+   "3b7be1839fee253266c54472ba6bbb29"
+  ],
+  "Maelstrom/Episode3/E3M1/EBridge_P.pyc": [
+   "8eedc507a1a8ca6788508f1d35fe3724"
+  ],
+  "Maelstrom/Episode3/E3M1/GeronimoArrivesAI.pyc": [
+   "a2e2477fc926cf94a7371e5de868c7a9"
+  ],
+  "Maelstrom/Episode3/E3M1/GeronimoAttack2AI.pyc": [
+   "b021f76652cc2849f5934021c8a758ff"
+  ],
+  "Maelstrom/Episode3/E3M1/GeronimoAttackAI.pyc": [
+   "8a038d7c510862973c42cce58b328dd1"
+  ],
+  "Maelstrom/Episode3/E3M1/GeronimoLeavesAI.pyc": [
+   "91bfb9658fd384de57b9ac594631058d"
+  ],
+  "Maelstrom/Episode3/E3M1/KlingonManeuverAI.pyc": [
+   "4852f028fcfac9f584fc9eff4ddcf113"
+  ],
+  "Maelstrom/Episode3/E3M1/RanKufAI.pyc": [
+   "9aae0f439de056a51a2792d236fdec46"
+  ],
+  "Maelstrom/Episode3/E3M1/RanKufStrongAI.pyc": [
+   "734a73e58da84aadceda9e424d0d53f9"
+  ],
+  "Maelstrom/Episode3/E3M1/ShipStayAI.pyc": [
+   "c42085bd0311d95a74ae0c44102c388c"
+  ],
+  "Maelstrom/Episode3/E3M1/WarpOutAI.pyc": [
+   "8498ca39f654bd6f70ef94b518df0e2d"
+  ],
+  "Maelstrom/Episode3/E3M1/__init__.pyc": [
+   "52d00421f86917a89c517012572960f9"
+  ],
+  "Maelstrom/Episode3/E3M2/AttackBerkeleyAI.pyc": [
+   "f27e5848cc8c6617d9c77834f3333caf"
+  ],
+  "Maelstrom/Episode3/E3M2/BasicWarbirdAI.pyc": [
+   "89f5b6e2bc22444401dee129788c6d03"
+  ],
+  "Maelstrom/Episode3/E3M2/DamageBerkeley.pyc": [
+   "d725c16ecc2d925ecd8d4ee80da32981"
+  ],
+  "Maelstrom/Episode3/E3M2/DamageWarbird.pyc": [
+   "b219724034911553c8cdc9c991ffd986"
+  ],
+  "Maelstrom/Episode3/E3M2/E3M2.pyc": [
+   "d14d8bbb0918dbbf7860f4d49bc5281b"
+  ],
+  "Maelstrom/Episode3/E3M2/E3M2WarpAI.pyc": [
+   "d819995e4403165b2773e14031849101"
+  ],
+  "Maelstrom/Episode3/E3M2/E3M2_Starbase12_P.pyc": [
+   "feed7638a3d7b5c82a040feea0f03f0b"
+  ],
+  "Maelstrom/Episode3/E3M2/E3M2_Vesuvi4_P.pyc": [
+   "e4cc89b5fda4b450f0af4884c60f7e87"
+  ],
+  "Maelstrom/Episode3/E3M2/E3M2_Vesuvi6_P.pyc": [
+   "0d10fc7ea310f9adcaa39bb22abdc612"
+  ],
+  "Maelstrom/Episode3/E3M2/EBridge_P.pyc": [
+   "b6d1e239e8f4d3f17bb5d1957286c16a"
+  ],
+  "Maelstrom/Episode3/E3M2/FleeAI.pyc": [
+   "3cd4522dffd046b56d79b8f85bf9607e"
+  ],
+  "Maelstrom/Episode3/E3M2/ProbeDestructAI.pyc": [
+   "68027b953b4c466e9d9e9a8835296dc3"
+  ],
+  "Maelstrom/Episode3/E3M2/RunAI.pyc": [
+   "623371069964ea21298456c3b37c46eb"
+  ],
+  "Maelstrom/Episode3/E3M2/StayAI.pyc": [
+   "c4ca0bd563ea060c3ba0c30bb075f134"
+  ],
+  "Maelstrom/Episode3/E3M2/TowAway.pyc": [
+   "06a316aafdbbad4b0b0b6ea29c7316c4"
+  ],
+  "Maelstrom/Episode3/E3M2/WarpAI.pyc": [
+   "d9bcb397cdfa972418828a092d776c14"
+  ],
+  "Maelstrom/Episode3/E3M2/__init__.pyc": [
+   "8157cb416de52d6048a1ef9305191598"
+  ],
+  "Maelstrom/Episode3/E3M4/DamageGalor1.pyc": [
+   "4563c0e328f2e9c150765231b925cc85"
+  ],
+  "Maelstrom/Episode3/E3M4/DamageGalor2.pyc": [
+   "673dd8cee77a778f9a9f922a871b1014"
+  ],
+  "Maelstrom/Episode3/E3M4/DamageGalor3.pyc": [
+   "6a33c570fa1dc32944367edf79298529"
+  ],
+  "Maelstrom/Episode3/E3M4/DamageMarauder.pyc": [
+   "d17cae5159818a1aea6c6113a9d1341b"
+  ],
+  "Maelstrom/Episode3/E3M4/DamageTerrik.pyc": [
+   "9e7d44df89f9c63ed6828746f69e97db"
+  ],
+  "Maelstrom/Episode3/E3M4/DamageWarbird.pyc": [
+   "eb455dec8b0f4b989e58105a349ad8be"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4.pyc": [
+   "6388110b9f6c2444640ddbdc16ce01e3"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4AttackPlayerAI.pyc": [
+   "b6ff85b5dbce87dec024a4c51efcca98"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4BasicGalorAI.pyc": [
+   "6d7128cbb61cbc8a3f82581e4e5b2a0c"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4DeadWarbirdAI.pyc": [
+   "3d62ac1015cb9954367732080d35a94f"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4FerengiAI.pyc": [
+   "6fa6f836a09965ed1947c164540ee308"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4GalorChaseAI.pyc": [
+   "9d14fdcf2eb6ea59bbf04c9582e58849"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4GalorChaseAI2.pyc": [
+   "e6f1d38dde634a714de447383a7f11c4"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartOneItari8_P.pyc": [
+   "6cfc61952e2c29d20576c3e0f7121733"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartOneVoltair2_P.pyc": [
+   "6e5214f1805a2826cc2200a7c1ee1b3e"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartOneXiEntrades5_P.pyc": [
+   "6f8d3837a51065acbcc709d45ce8479d"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartThreeItari8_P.pyc": [
+   "17d5e4e07fec2f229e3b47947c25805e"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartThreeVoltair2_P.pyc": [
+   "246e0e93515726370c6b41e0f418d8c8"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartThreeXiEntrades5_P.pyc": [
+   "4aff6bd2f101b262584469fd61b7fcf3"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartTwoItari8_P.pyc": [
+   "cb0e6ab4f7c9953635102511309c717e"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartTwoVoltair2_P.pyc": [
+   "c21031eaa3ee69ea18300dfe1a31f20a"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4PartTwoXiEntrades5_P.pyc": [
+   "d4ebe82be1cbe31245c64d89771e7829"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4SelfDestructAI.pyc": [
+   "b3c1ad39e61bf8c4e8c24e476bd22d49"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4TerrikAI.pyc": [
+   "43b31ed1c2b3813c12c990f2025f44e3"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4WarpOutAI.pyc": [
+   "8214db60ce298c601b58371f9596c270"
+  ],
+  "Maelstrom/Episode3/E3M4/E3M4_Starbase12_P.pyc": [
+   "5d2a30352759d01f27dedb25aee40123"
+  ],
+  "Maelstrom/Episode3/E3M4/PeregrineAI.pyc": [
+   "d3f542c09fa3ae9a7682345d5905acb1"
+  ],
+  "Maelstrom/Episode3/E3M4/WarpAI.pyc": [
+   "f3d966beccbff6740a5831d0baebe30c"
+  ],
+  "Maelstrom/Episode3/E3M4/__init__.pyc": [
+   "39f6ac109b969eba8e7c241394305e6a"
+  ],
+  "Maelstrom/Episode3/E3M5/CircleDerelictAI.pyc": [
+   "34df7841aba489bef560c21faba2fe9b"
+  ],
+  "Maelstrom/Episode3/E3M5/DamageBOP1.pyc": [
+   "91a8c35acd9ef0bb72ff0adf7f93bfbc"
+  ],
+  "Maelstrom/Episode3/E3M5/DamageGonDev.pyc": [
+   "c2544ad9c5985ca550f62f329cc0af96"
+  ],
+  "Maelstrom/Episode3/E3M5/DamageKR.pyc": [
+   "ea5667db47fb9097913d0e616101c8d4"
+  ],
+  "Maelstrom/Episode3/E3M5/DamageVorcha.pyc": [
+   "ba7f3f6d8b9b20fb3799349d22370422"
+  ],
+  "Maelstrom/Episode3/E3M5/E3M5.pyc": [
+   "5a5ca8c0cfe9083671d3f57e057788fb"
+  ],
+  "Maelstrom/Episode3/E3M5/E3M5BasicKlingonAI.pyc": [
+   "e765b3f339384ac155808975c55ac41d"
+  ],
+  "Maelstrom/Episode3/E3M5/E3M5JonKaAI.pyc": [
+   "b9dc2e3682fa9fada178ee7adc31c646"
+  ],
+  "Maelstrom/Episode3/E3M5/E3M5KahlessRoAI2.pyc": [
+   "b8199ac530b294790179e96444359571"
+  ],
+  "Maelstrom/Episode3/E3M5/E3M5_Belaruz2_P.pyc": [
+   "e1f58bb832047e2230e92afc77ce1ba2"
+  ],
+  "Maelstrom/Episode3/E3M5/E3M5_Belaruz4_P.pyc": [
+   "cf740f46671408e27005bb8c4c318cd8"
+  ],
+  "Maelstrom/Episode3/E3M5/GalorGroup1AI.pyc": [
+   "ab0c08efe601c27d5df84e0a62faa0ce"
+  ],
+  "Maelstrom/Episode3/E3M5/GalorGroup2AI.pyc": [
+   "2528826bdc3dd397f1ef777af0721cbb"
+  ],
+  "Maelstrom/Episode3/E3M5/KorbusWarpOutAI.pyc": [
+   "d9a9f7e111235b149090ec6173c50bb0"
+  ],
+  "Maelstrom/Episode3/E3M5/MatanAI.pyc": [
+   "540468c25d31ae2ed8b50de830368142"
+  ],
+  "Maelstrom/Episode3/E3M5/__init__.pyc": [
+   "ba4a7deb38e953eb7af86ec4ebfd4982"
+  ],
+  "Maelstrom/Episode3/EBridge_P.pyc": [
+   "c0b0f2be0662778dc9594f3376426e59"
+  ],
+  "Maelstrom/Episode3/Episode3.pyc": [
+   "e73cb46fd8939bd306ef2926ff20cee7"
+  ],
+  "Maelstrom/Episode3/WarpOutAI.pyc": [
+   "aed45dd40fde75a0d770966850223eb9"
+  ],
+  "Maelstrom/Episode3/__init__.pyc": [
+   "a05ce4f2bc40fba4ba4a5d87fc334a0b"
+  ],
+  "Maelstrom/Episode4/E4M4/E4M4.pyc": [
+   "f8883d9a585b2e157c355b3cdc7bd3af"
+  ],
+  "Maelstrom/Episode4/E4M4/E4M4WarpToVoltairAI.pyc": [
+   "37cda6a1ccd603bb44cd5342caab8d61"
+  ],
+  "Maelstrom/Episode4/E4M4/E4M4_Belaruz4_P.pyc": [
+   "37faa6157e33c8ca32da6b7cb868bc06"
+  ],
+  "Maelstrom/Episode4/E4M4/E4M4_Starbase12_P.pyc": [
+   "447e3f24832ae7978a74ed0dc2756d8a"
+  ],
+  "Maelstrom/Episode4/E4M4/E4M4_Voltair1_P.pyc": [
+   "22b169fd1819e3b3e2c6dff0f6e836f8"
+  ],
+  "Maelstrom/Episode4/E4M4/E4M4_Voltair2_P.pyc": [
+   "84083a65c23c8e30fe4e205cbf86d003"
+  ],
+  "Maelstrom/Episode4/E4M4/FinalWarpOutAI.pyc": [
+   "6129805d7bc8d426792ab0698beabdd2"
+  ],
+  "Maelstrom/Episode4/E4M4/FollowPlayerAI.pyc": [
+   "99fe869418d7a7fe290506510de72629"
+  ],
+  "Maelstrom/Episode4/E4M4/GalorAI.pyc": [
+   "bc1cf3690db989656f042bc5cb368823"
+  ],
+  "Maelstrom/Episode4/E4M4/GalorAI2.pyc": [
+   "b10eadb073451d9003ce27ec3603fadc"
+  ],
+  "Maelstrom/Episode4/E4M4/HybridAI.pyc": [
+   "74bca03b85f8f8c8fd6d00c32900729a"
+  ],
+  "Maelstrom/Episode4/E4M4/LookAtPlayerAI.pyc": [
+   "bdf5e5688758bc008438df08063bf41e"
+  ],
+  "Maelstrom/Episode4/E4M4/MavjopAttackAI.pyc": [
+   "367468fab8180f2762383430e55af4c1"
+  ],
+  "Maelstrom/Episode4/E4M4/MavjopAttackAI2.pyc": [
+   "638c2e1075303ebcf0f1a7310b4abe06"
+  ],
+  "Maelstrom/Episode4/E4M4/__init__.pyc": [
+   "adce8626f57a29953a613ae8e9b0bca8"
+  ],
+  "Maelstrom/Episode4/E4M5/DestructAI.pyc": [
+   "d2f7b28e991e62619d1043892623a7c7"
+  ],
+  "Maelstrom/Episode4/E4M5/E4M5.pyc": [
+   "223cd591a0a91be4dbb1019c8bb20411"
+  ],
+  "Maelstrom/Episode4/E4M5/E4M5NebulaAI.pyc": [
+   "25f011ee809a0554c9361a0a67244be0"
+  ],
+  "Maelstrom/Episode4/E4M5/E4M5PicardAI.pyc": [
+   "4a4545ca191e9e46e0adf73399d15a04"
+  ],
+  "Maelstrom/Episode4/E4M5/E4M5_Chambana1_P.pyc": [
+   "7cc64932d7cef648ebf99673944fe97d"
+  ],
+  "Maelstrom/Episode4/E4M5/E4M5_Chambana2_P.pyc": [
+   "1b3fa095e894dc40048358634c5130b0"
+  ],
+  "Maelstrom/Episode4/E4M5/E4M5_Starbase12_P.pyc": [
+   "89e14f9b6325da90d8f0d54d97e23dc0"
+  ],
+  "Maelstrom/Episode4/E4M5/FinalWarpOutAI.pyc": [
+   "c3eea4367f45471210cb5a8183515d9b"
+  ],
+  "Maelstrom/Episode4/E4M5/GalorAttackAI.pyc": [
+   "eb962120e31d6862ba0fcbf11b76ebb4"
+  ],
+  "Maelstrom/Episode4/E4M5/HybridAI.pyc": [
+   "2233182271853e4bbebab9b4806acf48"
+  ],
+  "Maelstrom/Episode4/E4M5/KeldonAttackAI.pyc": [
+   "daa3b977452f79392873ded0bfd1a108"
+  ],
+  "Maelstrom/Episode4/E4M5/ShipyardAI.pyc": [
+   "28438b71d12cd6beb2758ab2ba6ce5fd"
+  ],
+  "Maelstrom/Episode4/E4M5/StayAI.pyc": [
+   "1e18adabaf901298cc00c1e02960572f"
+  ],
+  "Maelstrom/Episode4/E4M5/__init__.pyc": [
+   "78d916eb614cddec71623f9865084738"
+  ],
+  "Maelstrom/Episode4/E4M6/AttackAI.pyc": [
+   "3c82da1ef15ff1a19164c858b369d201"
+  ],
+  "Maelstrom/Episode4/E4M6/AttackPlayerAI.pyc": [
+   "0868bb355bc1f0a9584fdabbc8a586d0"
+  ],
+  "Maelstrom/Episode4/E4M6/BOPKillAI.pyc": [
+   "4a9994c4b84fae3c5b28d0965056db03"
+  ],
+  "Maelstrom/Episode4/E4M6/CebalraiFreighterWarpAI.pyc": [
+   "a10ae29162a21e145759755769296e4c"
+  ],
+  "Maelstrom/Episode4/E4M6/CenterFieldAI.pyc": [
+   "03a76c2e035203bb679ec107eb7d4ff1"
+  ],
+  "Maelstrom/Episode4/E4M6/DamageGalor.pyc": [
+   "423abfbec16adaa4e20c31ad730d9280"
+  ],
+  "Maelstrom/Episode4/E4M6/DamageLightGalor.pyc": [
+   "58f7b063b1e48764eda687a913e3ee83"
+  ],
+  "Maelstrom/Episode4/E4M6/DestructAI.pyc": [
+   "23f7d27d4fa154eb22611279541e4a5f"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6.pyc": [
+   "e3825f519356dd44b922dd415a1bb44e"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6Galor1AI.pyc": [
+   "568dcc5c95f9e86c3847e15a69a6d584"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6Galor2AI.pyc": [
+   "7837f3af335f233549e360ebafa724b0"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6Keldon1AI.pyc": [
+   "d43cc7d39c673b2c07afda502a693ffe"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6_Cebalrai2_P.pyc": [
+   "a7d04aad8313f34d635e75ce83e0665f"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6_Cebalrai3_P.pyc": [
+   "c8d8978a3df07b06b037770ef8968348"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6_Nepenthe1_P.pyc": [
+   "ead693e06822e12e65ff75ea0375fe72"
+  ],
+  "Maelstrom/Episode4/E4M6/E4M6_Riha1_P.pyc": [
+   "4abba29a116d81ae61a3cb9a89503a84"
+  ],
+  "Maelstrom/Episode4/E4M6/FreighterFleeAI.pyc": [
+   "54fe356deac47e896ff399b6d8c8c7fa"
+  ],
+  "Maelstrom/Episode4/E4M6/Galor2AI.pyc": [
+   "bd7710ba7fdb0281487150ad699de145"
+  ],
+  "Maelstrom/Episode4/E4M6/Galor3AI.pyc": [
+   "fab7bf5c9858cd2e1d56e74c7da12d8a"
+  ],
+  "Maelstrom/Episode4/E4M6/GalorAI.pyc": [
+   "0242505d0ceeb272b788dc596564d200"
+  ],
+  "Maelstrom/Episode4/E4M6/InitialBOPAI.pyc": [
+   "160bb792b9aae035f9f3bad368eb0089"
+  ],
+  "Maelstrom/Episode4/E4M6/JustStayAI.pyc": [
+   "e48434c5184e756c332b40468b22418f"
+  ],
+  "Maelstrom/Episode4/E4M6/KeldonAI.pyc": [
+   "d2a7cdb300064b482c8980eaa8577079"
+  ],
+  "Maelstrom/Episode4/E4M6/KessokAmbassadorAI.pyc": [
+   "a55d321ab92386fd5a03f5ede778a59e"
+  ],
+  "Maelstrom/Episode4/E4M6/KlingonAI.pyc": [
+   "59179c29ebfc194ec5302ccda8867439"
+  ],
+  "Maelstrom/Episode4/E4M6/KlingonLeaveAI.pyc": [
+   "7ad3a26c2516cab6cd8a41e8db497f5e"
+  ],
+  "Maelstrom/Episode4/E4M6/OutpostAI.pyc": [
+   "59db2545c94b3eea4e187985492de620"
+  ],
+  "Maelstrom/Episode4/E4M6/RammingKeldonAI.pyc": [
+   "e4e0b29f01443e76ecbd27576a815bcb"
+  ],
+  "Maelstrom/Episode4/E4M6/RihaFreighterFleeAI.pyc": [
+   "160be249364d11d34925515cd4228a65"
+  ],
+  "Maelstrom/Episode4/E4M6/RihaFreighterWarp2AI.pyc": [
+   "51f6f72add145d7fd306cbf4f75a1098"
+  ],
+  "Maelstrom/Episode4/E4M6/RihaFreighterWarpAI.pyc": [
+   "355c225d234dc2ecca0a1dc9441c65b4"
+  ],
+  "Maelstrom/Episode4/E4M6/RihaGalorAI.pyc": [
+   "3ccf166b46897a18118472849a5fb57c"
+  ],
+  "Maelstrom/Episode4/E4M6/TransportAI.pyc": [
+   "afbcd8a321089a95a94f092f163443ea"
+  ],
+  "Maelstrom/Episode4/E4M6/WarpOutAI.pyc": [
+   "c1cb088228df06f285bf1af6f48cbc70"
+  ],
+  "Maelstrom/Episode4/E4M6/__init__.pyc": [
+   "597f6cbaf2e5558d760db5bb5e7ad5ff"
+  ],
+  "Maelstrom/Episode4/EBridge_P.pyc": [
+   "375f4166a51f40a8efad6d14aa7135f9"
+  ],
+  "Maelstrom/Episode4/Episode4.pyc": [
+   "fa11bcdc16def55b933c8570756251e4"
+  ],
+  "Maelstrom/Episode4/__init__.pyc": [
+   "3846fce94f3888b808461e4f75ca30b8"
+  ],
+  "Maelstrom/Episode5/E5M2/DamageAkira.pyc": [
+   "262723e88454801a5fdf2c08bc6a7094"
+  ],
+  "Maelstrom/Episode5/E5M2/E5M2.pyc": [
+   "d6359b0235412dd72c152b62c955f7a7"
+  ],
+  "Maelstrom/Episode5/E5M2/EBridge_P.pyc": [
+   "a1fb34a53aeb93bef297bdc643111658"
+  ],
+  "Maelstrom/Episode5/E5M2/Galor1AI.pyc": [
+   "bfe48643795c203136fc1604c821884f"
+  ],
+  "Maelstrom/Episode5/E5M2/Galor2AI.pyc": [
+   "8aad02dcee592ea6f4e9f96b928f3d37"
+  ],
+  "Maelstrom/Episode5/E5M2/Galor3AI.pyc": [
+   "06ec51e02c3570a333078b12273ce56c"
+  ],
+  "Maelstrom/Episode5/E5M2/OutpostAI.pyc": [
+   "d83625ae18eddf704b33ebd47f2b3876"
+  ],
+  "Maelstrom/Episode5/E5M2/OutpostAI2.pyc": [
+   "e64a76ff97b7d79e842a65956c0e5a7e"
+  ],
+  "Maelstrom/Episode5/E5M2/OutpostAI3.pyc": [
+   "66796340d5b30b8137dc6bd3bf2eebf6"
+  ],
+  "Maelstrom/Episode5/E5M2/Prendel3_P.pyc": [
+   "06992252461ab1ad647f434d673761e9"
+  ],
+  "Maelstrom/Episode5/E5M2/SB12_P.pyc": [
+   "7c67b233799bb2ca6c159b95af3f969f"
+  ],
+  "Maelstrom/Episode5/E5M2/__init__.pyc": [
+   "8fd599d5b151db769b17982933177028"
+  ],
+  "Maelstrom/Episode5/E5M4/Alioth6_P.pyc": [
+   "80e66836b8837a7e8683e7ada3a9aa2f"
+  ],
+  "Maelstrom/Episode5/E5M4/DistanceCheckAI.pyc": [
+   "4538710b5c5c7711c647ff966717c392"
+  ],
+  "Maelstrom/Episode5/E5M4/E5M4.pyc": [
+   "497ddc9d2f6310277338a98ac368c767"
+  ],
+  "Maelstrom/Episode5/E5M4/EBridge_P.pyc": [
+   "8caab86d363e030874b281c700fc0861"
+  ],
+  "Maelstrom/Episode5/E5M4/EnemyAI.pyc": [
+   "0cc22f476669059836e8d0eb016f0938"
+  ],
+  "Maelstrom/Episode5/E5M4/EnemyAI2.pyc": [
+   "be7666516963adc28fe8588d8f445f6e"
+  ],
+  "Maelstrom/Episode5/E5M4/FollowAI.pyc": [
+   "867d272e8ad4d6476084b367842f9a0b"
+  ],
+  "Maelstrom/Episode5/E5M4/MatanAI.pyc": [
+   "8f437a0ccceeca6337f0729072f23bb2"
+  ],
+  "Maelstrom/Episode5/E5M4/Orbit1AI.pyc": [
+   "520c138fadb2f7615f661f6caa71ae4c"
+  ],
+  "Maelstrom/Episode5/E5M4/Orbit2AI.pyc": [
+   "5bbc3819908439a5cc0f52a390797954"
+  ],
+  "Maelstrom/Episode5/E5M4/Orbit3AI.pyc": [
+   "0d8536fcd32f37c3358dd33e7d91616a"
+  ],
+  "Maelstrom/Episode5/E5M4/Orbit4AI.pyc": [
+   "5eae1d41a7bab40da8e0ac351cb94f09"
+  ],
+  "Maelstrom/Episode5/E5M4/Orbit5AI.pyc": [
+   "4e76453f607f6b93c0ffea9db0e1506e"
+  ],
+  "Maelstrom/Episode5/E5M4/Orbit7AI.pyc": [
+   "76130dd15b1113d1f82483b52ff72e70"
+  ],
+  "Maelstrom/Episode5/E5M4/PatrolAI.pyc": [
+   "70a20c014109f145fe4d115fe8a452ff"
+  ],
+  "Maelstrom/Episode5/E5M4/PatrolAI2.pyc": [
+   "ad46e89c797c5eb3f92a2087a6f35e37"
+  ],
+  "Maelstrom/Episode5/E5M4/Patrol_P.pyc": [
+   "6f08d9a6bd35d219b9221195cfdb85e8"
+  ],
+  "Maelstrom/Episode5/E5M4/ShuttleAI.pyc": [
+   "6dcee852f524484e9f326273824da3c6"
+  ],
+  "Maelstrom/Episode5/E5M4/__init__.pyc": [
+   "4decaac495d81a4bb01cba4d359034bd"
+  ],
+  "Maelstrom/Episode5/Episode5.pyc": [
+   "4ae86b7ec3cf930b9094028898a008ba"
+  ],
+  "Maelstrom/Episode5/__init__.pyc": [
+   "8d6cd6e33ea552af6c6175185b7813ea"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1.pyc": [
+   "a6a561b5c54479ddaf9f21c7198794e1"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Devore_Ona.pyc": [
+   "8bdeec13c34cd541ec9d60578b241644"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Galor1.pyc": [
+   "759f0f23f1c04065f90c031c7cfd94d2"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Galor2.pyc": [
+   "0a6ea22fdba470b3a4dce32c82770192"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Keldon.pyc": [
+   "12396229fec5c944bc1930495d363e69"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_More_Keldon.pyc": [
+   "42e8b4530408f11d57f5bdfa0b6076ec"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_OnaGalor.pyc": [
+   "e9aff4ae97e75dfae1849e361eb3cefe"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_OnaKeldon.pyc": [
+   "450b895e20ec9f72283c80d2d7b8fa5e"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Rescue.pyc": [
+   "06f8f261cd624623587a1317fb25a9bc"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_SanFrancisco_Artrus.pyc": [
+   "79035876da37ab43cf08feeb1d4e2410"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_SanFrancisco_Ona.pyc": [
+   "5ae7e6c327fe42ed4b5299946eb45f39"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_SanFrancisco_Savoy1.pyc": [
+   "cdb54c6b9c5f8ad1ebc6896daa0ec21d"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_SanFrancisco_Savoy3.pyc": [
+   "83e04a0549b33327a0436b4291e95c5f"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Savoy1Keldon.pyc": [
+   "3945f24c3079ac58c6d373deaefd4e48"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Savoy3Galor.pyc": [
+   "f0b75089e5c4746f7904a8cf6d085017"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Savoy3Keldon.pyc": [
+   "3c1464e6c78a45f5a63be819cc86b26f"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_SecondArtrusWave.pyc": [
+   "583d57f6762f2e2a044f88ca0ac05a6c"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Transport.pyc": [
+   "7e16492b088106b51b469bf9048a7add"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Venture_Ona.pyc": [
+   "f8f145c06db463e4ac9f14450a5221df"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Venture_Savoy1.pyc": [
+   "f783e5577002f8d304687a582d205be3"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_Venture_Savoy3.pyc": [
+   "2d8c31d5928efc824ae6ee5e86acde2c"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_AI_WarpToStarbase.pyc": [
+   "23fa83e1e33f198df47988e06d0972e0"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_Artrus3_P.pyc": [
+   "24efed1bda28500138757f5f703f4470"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_DeepSpace_P.pyc": [
+   "fdc25ebcfd5022d2dd052358858be9c7"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_EBridge_P.pyc": [
+   "9b8d95344d4f86c31cb0db9d31d7300a"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_Ona3_P.pyc": [
+   "77f5f7623b6189a8a44c7eb7a4d3a315"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_Savoy1_P.pyc": [
+   "39c274c1562f9463177863b0087a47f7"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_Savoy3_P.pyc": [
+   "705e8573b927c986ed68bfb726e1911d"
+  ],
+  "Maelstrom/Episode6/E6M1/E6M1_Starbase12_P.pyc": [
+   "6f08e2c5abed4db0f896a64402db70f8"
+  ],
+  "Maelstrom/Episode6/E6M1/__init__.pyc": [
+   "6375e121123ed8a62ecb58b304d5cda0"
+  ],
+  "Maelstrom/Episode6/E6M2/AdamsDamaged.pyc": [
+   "899512364e8960757e271c3dfb97e92d"
+  ],
+  "Maelstrom/Episode6/E6M2/DauntlessDamaged.pyc": [
+   "9c5afcdaa832bbed52be7bf92d1aaacd"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2.pyc": [
+   "aecb7af1db8b4ab9357a8b7f533addc6"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Galor1_Geble.pyc": [
+   "a1df456d3469daa54357b7efdf233181"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Galor1_Serris.pyc": [
+   "cd491a7b46bdb04014be1e7d48a34054"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Galor2_Geble.pyc": [
+   "7289bd649abda9e9c8a758ad2a31a0fa"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Galor2_Serris.pyc": [
+   "3e0863059b08c2bdbd9071c56a7517c8"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Galor3_Geble.pyc": [
+   "54210c1f6756d1ff33fce4d61a17b010"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Intercept.pyc": [
+   "8eb858fcbe10a1ec02693a1dcb691425"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Night_Geble.pyc": [
+   "df8dfcb3bddda1e7b6e56947f8eedfd2"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Night_Ona.pyc": [
+   "7bd1fbe454891236b646464fc09fa7b2"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Night_Serris.pyc": [
+   "4fad456cb6e4b6a4b724bf57d0639f6c"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_AI_Night_Starbase.pyc": [
+   "2f9d1a30b56abf43266ff2c5dc4b2fe7"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_DeepSpace_P.pyc": [
+   "d74c40be6d208a3700833d17f0647185"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_EBridge_P.pyc": [
+   "8bbce7afb2bb2e2cf51708b15959790b"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_Geble3_P.pyc": [
+   "d6cf2c2aeea422d47294c92ef8f94c70"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_Geble4_P.pyc": [
+   "62dd8f0e4854fa23e11292b9fdf30f1c"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_Serris1_P.pyc": [
+   "0ec5aa1ec92ff66dd9d3fbf2937390b4"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_Serris3_P.pyc": [
+   "2f71f19fdc72f61670eb621755cf4014"
+  ],
+  "Maelstrom/Episode6/E6M2/E6M2_Starbase_P.pyc": [
+   "4f64b2ee77447f75d09aaedd7f537f4d"
+  ],
+  "Maelstrom/Episode6/E6M2/GettingDauntlessPassengers.pyc": [
+   "b3c281764af0eb4e43454df5afa10b9b"
+  ],
+  "Maelstrom/Episode6/E6M2/Hulk1Damaged.pyc": [
+   "214ecdfebd7db0a913b23a03d174c97d"
+  ],
+  "Maelstrom/Episode6/E6M2/Hulk2Damaged.pyc": [
+   "b433a87282d515f5937310b212c5ce87"
+  ],
+  "Maelstrom/Episode6/E6M2/Hulk3Damaged.pyc": [
+   "64897b9dbbe3981d989ae115d22f0e07"
+  ],
+  "Maelstrom/Episode6/E6M2/__init__.pyc": [
+   "dfaec44e0ec283504ab23124a3d99b26"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3.pyc": [
+   "9c899a3f53e13bfa31936fa52a95f6cd"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_AttackStation.pyc": [
+   "47555a662981aab07d2955fea45a513b"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Cards_Savoy3.pyc": [
+   "da840699ee491121cc6619b2403d8e23"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Fed.pyc": [
+   "2f5e3a18c724bedc1a7242463a692168"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Galor3.pyc": [
+   "1d024a9b0cf39c10ce08da2124fcc7bd"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Keldon2.pyc": [
+   "3fea320ad99d55db1ac18de704c5a951"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Keldon3.pyc": [
+   "f6634642d67e480926c9ca1dba633f22"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Khit.pyc": [
+   "62e0ce34c9c5654d7b185421197183a0"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Khit_Launch.pyc": [
+   "0301c4967f25bad747f40865787e980e"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Khit_Launch_Done.pyc": [
+   "022ef4faf54635bbf51021777ec4abc1"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Night.pyc": [
+   "135e72ae998004ac994fc3b2ef4fdae9"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Shuttle.pyc": [
+   "6b4176fb00fe74d87a919d14b6716776"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Station.pyc": [
+   "ff09e4b2ee3c1441def1f6e3340bbd21"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Stay.pyc": [
+   "e035688779b53cbe4e13b4fa009b7c2b"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_AI_Transport.pyc": [
+   "80ca7b2f59336102d1df7f9a9c84dd23"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_EBridge_P.pyc": [
+   "3148b72510a1a6897989f0d16a110c47"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_Savoy1_P.pyc": [
+   "fa4ac0766bcaf568fb888ef83f7f2ed4"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_Savoy3_P.pyc": [
+   "2ce95e1dd8d52b75a25c8cce62fc0a04"
+  ],
+  "Maelstrom/Episode6/E6M3/E6M3_Starbase_P.pyc": [
+   "6c527142ca9deae63d0732f29e8aa6a6"
+  ],
+  "Maelstrom/Episode6/E6M3/__init__.pyc": [
+   "15edcadb8aadfde154f36b64ce3f2bee"
+  ],
+  "Maelstrom/Episode6/E6M4/DamagedKeldon.pyc": [
+   "c04016fb7eb7ed6322b6361e396d86f1"
+  ],
+  "Maelstrom/Episode6/E6M4/DamagedTransport.pyc": [
+   "67f5fc8ff1c2bb3f29ea490ecf164b4f"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4.pyc": [
+   "24018ad7119704c33242ddf2424e8dd3"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_AI_Galor2.pyc": [
+   "a8582f6de71989cfb8f9eb547c123543"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_AI_Keldon2.pyc": [
+   "b8c8ec70fcc8283f52a6e0f0466ed893"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_AI_Kessok.pyc": [
+   "38f01bcf1e77abf2cd9dae4e77e8e90a"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_AI_KessokWarp.pyc": [
+   "3450c61c91f03929bf9f065b6d420fa0"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_AI_Probe.pyc": [
+   "1a9683834389ffa71310b344c278f2a5"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_AI_Yiles.pyc": [
+   "fe24078e86c8977991c52cbc69d1cdd6"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_AI_Yiles_Survive.pyc": [
+   "b50c554cbe82280626144739fb41f236"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_EBridge_P.pyc": [
+   "68557135a43c5e2335c09d4438582e9e"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_Prendel3_P.pyc": [
+   "b88fae5dec756daba0bd9093b50e5fd5"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_Prendel5_P.pyc": [
+   "62f6b2bbc69e52feae9e33eab4be18d0"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_Riha1_P.pyc": [
+   "870b62a8272b828939473865735fcc79"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_Tezle1_P.pyc": [
+   "d9ee8620d2151cbb3c8bb612c35cbeb5"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_Tezle2_P.pyc": [
+   "3a0a3be136fd1d647c04ba8e06d944d7"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_Yiles1_P.pyc": [
+   "49d3448c2c2746ac7b49797b1e886cb1"
+  ],
+  "Maelstrom/Episode6/E6M4/E6M4_Yiles2_P.pyc": [
+   "74423abf604af9ac5a9f713610763b14"
+  ],
+  "Maelstrom/Episode6/E6M4/__init__.pyc": [
+   "1f47f15af2166fedb07b2797fd0f7caf"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5.pyc": [
+   "d9b7e93b5ea5588f16618da9321152c5"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Fed.pyc": [
+   "a67e9c6b103ca71a29494a4aa3db0274"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Fed_WarpToBeol.pyc": [
+   "7b0c7dd65dbea8d550c5252ebbc4f07a"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_FirstWave.pyc": [
+   "454d226ca43c826f4323d09e57342614"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_FleeFromStarbase.pyc": [
+   "b17d62e4eed97964cfb8ec90d87688f1"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Galor1_2.pyc": [
+   "7fa4d17ecc081e3a8fa988e02b107ee2"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Galor3.pyc": [
+   "8af62fd1955156813b9c102ee10a0707"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Keldon1.pyc": [
+   "78863636012819fb2fa65b3ea8c8a6e7"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Keldon3.pyc": [
+   "3463b872a58a7747202c6f716ad0c6ad"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Kessok1.pyc": [
+   "816305652f62f23bc2bb4158ad526fc9"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Kessok2.pyc": [
+   "d0ac0bb90bd6f7c354453bbcdd73982c"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Kessok45.pyc": [
+   "d292749568e46b63901d2738298b521a"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Khit.pyc": [
+   "08eb01a11db6a0e790c9771254fdec24"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Khit_2.pyc": [
+   "28785ab4ca68c2db92ee28946e4c306e"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_SecondWave.pyc": [
+   "588041cbccb0677c28444e443ff42bac"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_ShuttleEscape.pyc": [
+   "dfb7119b7f5f65f523491dd0f89efcb5"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_ShuttleLanding.pyc": [
+   "ed00f85814ff20a12f19e0f63811db5a"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Tezle2.pyc": [
+   "55cb5044a71985e2e94abe638f944e28"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_AI_Zhukov.pyc": [
+   "3b969bcd9e5f592c61a5b778e2a262e0"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_Beol4_P.pyc": [
+   "16794efbc7e28e7753054bf45baef750"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_EBridge_P.pyc": [
+   "698f3d6d9938225da797c683f2b2e723"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_Prendel4_P.pyc": [
+   "b375b4eadc252e855184fbce8a0e286c"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_Prendel5_P.pyc": [
+   "34779dc779dc43d402100b32f2825e57"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_Starbase12_P.pyc": [
+   "b80121c20b295ee6a0a98348aec9c181"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_Tezle1_P.pyc": [
+   "948a947e47209173d819ad847a41b1ca"
+  ],
+  "Maelstrom/Episode6/E6M5/E6M5_Tezle2_P.pyc": [
+   "e09a720649b81b94a6bb87c3eab25313"
+  ],
+  "Maelstrom/Episode6/E6M5/Warp_P.pyc": [
+   "68b9123550bce6fdff7ffd47e4e9cc39"
+  ],
+  "Maelstrom/Episode6/E6M5/__init__.pyc": [
+   "6c87a44f688884fd0a938e4e3c39ca9c"
+  ],
+  "Maelstrom/Episode6/Episode6.pyc": [
+   "78e405d0521321221cae0a9acefa0ddd"
+  ],
+  "Maelstrom/Episode6/__init__.pyc": [
+   "66d2c295e149074b9062b35e4d4db377"
+  ],
+  "Maelstrom/Episode7/E7M1/E7M1.pyc": [
+   "de5d29a5f7de18bf0fd385a12f876653"
+  ],
+  "Maelstrom/Episode7/E7M1/E7M1NebulaAI.pyc": [
+   "ca7c471f44b287ab4023a76915f530f8"
+  ],
+  "Maelstrom/Episode7/E7M1/E7M1StarbaseAI.pyc": [
+   "23322dd6e772aa5d0485ddf33df5a9d1"
+  ],
+  "Maelstrom/Episode7/E7M1/E7M1_DeepSpace_Placements.pyc": [
+   "f15690ac2687377565111cf73157fdad"
+  ],
+  "Maelstrom/Episode7/E7M1/E7M1_P.pyc": [
+   "378e3ce75a112e9167ba960263125cef"
+  ],
+  "Maelstrom/Episode7/E7M1/E7M1_Starbase12_Placements.pyc": [
+   "249e4078a6ed6b1432350cf7df572410"
+  ],
+  "Maelstrom/Episode7/E7M1/EBridge_P.pyc": [
+   "235d45688984bb3c7a890c6e1749ae89"
+  ],
+  "Maelstrom/Episode7/E7M1/FriendlyAI.pyc": [
+   "f03fa2f4cf83f8d680b6b2ce35b099f4"
+  ],
+  "Maelstrom/Episode7/E7M1/Keldon2AI.pyc": [
+   "5032e919d82b1fad28420cf0fb88e924"
+  ],
+  "Maelstrom/Episode7/E7M1/KeldonAI.pyc": [
+   "2d4d0a161f0ea4cd306fd499d09c9ed6"
+  ],
+  "Maelstrom/Episode7/E7M1/Kessok1AI.pyc": [
+   "008303351c56e30632e354aac62951fb"
+  ],
+  "Maelstrom/Episode7/E7M1/Kessok2AI.pyc": [
+   "6a542c0eb8fe726a3bbf32b7de16aef1"
+  ],
+  "Maelstrom/Episode7/E7M1/RamStarbaseAI.pyc": [
+   "27e9696b6930acbcc58b83a249093ec3"
+  ],
+  "Maelstrom/Episode7/E7M1/RamStarbaseSlowAI.pyc": [
+   "81d26f37d1f343287257e137ab5f5c22"
+  ],
+  "Maelstrom/Episode7/E7M1/WarpAI.pyc": [
+   "53018c2732fec5da1193b7214effa86f"
+  ],
+  "Maelstrom/Episode7/E7M1/WarpSB12AI.pyc": [
+   "eacc9e97afd5bd290f731f4fe0c9d5d5"
+  ],
+  "Maelstrom/Episode7/E7M1/__init__.pyc": [
+   "f03cdce5e02e76fbfcb0d49b5084d7b0"
+  ],
+  "Maelstrom/Episode7/E7M2/E7M2.pyc": [
+   "3b312a251e7fe9175c7bc3282b838562"
+  ],
+  "Maelstrom/Episode7/E7M2/E7M2_Albirea_P.pyc": [
+   "236a5b93422316cdd1a233d8649dea33"
+  ],
+  "Maelstrom/Episode7/E7M2/E7M2_Vorcha.pyc": [
+   "e13fd32ca4f025314293c13f85fca8ce"
+  ],
+  "Maelstrom/Episode7/E7M2/E7M2_Warbird.pyc": [
+   "f6b6cd383c6787316ba1b2cf22c7edb5"
+  ],
+  "Maelstrom/Episode7/E7M2/EBridge_P.pyc": [
+   "4a3786d511190bc1de261f760b458c86"
+  ],
+  "Maelstrom/Episode7/E7M2/EnemyAI.pyc": [
+   "16950761f11a72d5b3471f8ab90b2b8f"
+  ],
+  "Maelstrom/Episode7/E7M2/InterceptAI.pyc": [
+   "fee1d6c24fccc2a47eb0e05edb13d80d"
+  ],
+  "Maelstrom/Episode7/E7M2/OutpostAI.pyc": [
+   "13cbf9537f773709a598d0c39bdcea97"
+  ],
+  "Maelstrom/Episode7/E7M2/PlayerAI2.pyc": [
+   "da3970010da5daa030f902ed913f2fdc"
+  ],
+  "Maelstrom/Episode7/E7M2/PlayerAI_Albirea.pyc": [
+   "d75fbef109589c7376a750d92d67bdcf"
+  ],
+  "Maelstrom/Episode7/E7M2/StayAI.pyc": [
+   "5dadb61a1edcb03a955ed958911419a0"
+  ],
+  "Maelstrom/Episode7/E7M2/VorchaRamAI.pyc": [
+   "ba465d6e824538c102eb2ad4c374a78a"
+  ],
+  "Maelstrom/Episode7/E7M2/VorchaRunAI.pyc": [
+   "6f6ab128f134ed02765f6f05422b1ed4"
+  ],
+  "Maelstrom/Episode7/E7M2/VorchaSkirmishAI.pyc": [
+   "3cc78ec11ba264865d73a02ce2cb42ed"
+  ],
+  "Maelstrom/Episode7/E7M2/WarbirdSkirmishAI.pyc": [
+   "fb9dbcefabaa9498a18e837f25ec9d1d"
+  ],
+  "Maelstrom/Episode7/E7M2/WarpAI.pyc": [
+   "c6830d202333833d82ef4209982b6c3c"
+  ],
+  "Maelstrom/Episode7/E7M2/__init__.pyc": [
+   "e93b25218135a32685df9c3a0f4dd24f"
+  ],
+  "Maelstrom/Episode7/E7M3/AkiraAI.pyc": [
+   "850a2fee58ce70075cbd5d915785cb23"
+  ],
+  "Maelstrom/Episode7/E7M3/Ascella3_P.pyc": [
+   "c5d9317a83f78df5d9c24d61e94f6694"
+  ],
+  "Maelstrom/Episode7/E7M3/AttackerGroup1AI.pyc": [
+   "e6d7149853fdac55aed25c823461f406"
+  ],
+  "Maelstrom/Episode7/E7M3/AttackerGroup2AI.pyc": [
+   "9822fe84ac1044541041ffce3a9dc70e"
+  ],
+  "Maelstrom/Episode7/E7M3/BaseAI.pyc": [
+   "267fc904cd2461ea84e480a29fb2ab18"
+  ],
+  "Maelstrom/Episode7/E7M3/BaseAI2.pyc": [
+   "d63a812c198ca13a0fc20cc0cbf2d5bb"
+  ],
+  "Maelstrom/Episode7/E7M3/CircleAI.pyc": [
+   "357a0fe5f5fa68e773f1f558e4c73a02"
+  ],
+  "Maelstrom/Episode7/E7M3/DefenderAI.pyc": [
+   "843d29186f961614b176b8a7872f53c4"
+  ],
+  "Maelstrom/Episode7/E7M3/DefenderAmbushAI.pyc": [
+   "bf45a9f8208631871ec5de30e9c8ed8d"
+  ],
+  "Maelstrom/Episode7/E7M3/E7M3.pyc": [
+   "4a3c4a167af5bd1cc8b57b9e1f0f23e3"
+  ],
+  "Maelstrom/Episode7/E7M3/E7M3_P.pyc": [
+   "b9d4237ef7cd866374465a5f87bd3614"
+  ],
+  "Maelstrom/Episode7/E7M3/E7M5_P.pyc": [
+   "5317d93e4581c60e4d427ebd4d76431e"
+  ],
+  "Maelstrom/Episode7/E7M3/EnemyAI.pyc": [
+   "81cfba13d3703c01f7db71103f5ed21d"
+  ],
+  "Maelstrom/Episode7/E7M3/EnemyFollowAI.pyc": [
+   "6899282984e9dc4067b21fbfd9d27752"
+  ],
+  "Maelstrom/Episode7/E7M3/FreighterAI.pyc": [
+   "73762f020c3ba1f9cb19b4eb74397ba0"
+  ],
+  "Maelstrom/Episode7/E7M3/GeronimoAI.pyc": [
+   "ccb9f93870cec080e8c7224c8292ec18"
+  ],
+  "Maelstrom/Episode7/E7M3/LaunchMateAI.pyc": [
+   "e54a097a9ab8b4512aac44f5695b087b"
+  ],
+  "Maelstrom/Episode7/E7M3/ReinforcementAI.pyc": [
+   "bd81aca16c88ecc24da66f4ed4ee2210"
+  ],
+  "Maelstrom/Episode7/E7M3/StarbaseAI.pyc": [
+   "925aef0f861e72692d3e87655fe8ce87"
+  ],
+  "Maelstrom/Episode7/E7M3/TorpLauncherAI.pyc": [
+   "c8984487c47543f92c28d1c48d92e7bc"
+  ],
+  "Maelstrom/Episode7/E7M3/WarpAwayAI.pyc": [
+   "a3eed7c240fbb78115e57a852fc7fcba"
+  ],
+  "Maelstrom/Episode7/E7M3/XiEnt5_P.pyc": [
+   "32387303a334f79972bf5fda4e3c4803"
+  ],
+  "Maelstrom/Episode7/E7M3/__init__.pyc": [
+   "32c110c296de43596d5fc56ef40c3475"
+  ],
+  "Maelstrom/Episode7/E7M6/AkiraAI.pyc": [
+   "85bfa5ce515b2a99516a47902688958e"
+  ],
+  "Maelstrom/Episode7/E7M6/Alioth8_P.pyc": [
+   "21325facf25de211c63770ab4dad900e"
+  ],
+  "Maelstrom/Episode7/E7M6/AlliedAI.pyc": [
+   "d0aae81a8a820a434296037d813bbd9f"
+  ],
+  "Maelstrom/Episode7/E7M6/BaseAI.pyc": [
+   "85840e2690da3937e5214792e73f30c0"
+  ],
+  "Maelstrom/Episode7/E7M6/E7M6.pyc": [
+   "835c5e46ec09798d378e193fb8d9e011"
+  ],
+  "Maelstrom/Episode7/E7M6/E7M6_P.pyc": [
+   "dc846f60ea4f021cbe7af759ca5d311c"
+  ],
+  "Maelstrom/Episode7/E7M6/EBridge_P.pyc": [
+   "3b6fb6d9d79dd13884cbc293de186f4e"
+  ],
+  "Maelstrom/Episode7/E7M6/EnemyAI.pyc": [
+   "69fc842b9603c1565f6b6bf0969ef6ad"
+  ],
+  "Maelstrom/Episode7/E7M6/EnemyFollowAI.pyc": [
+   "5da2bea6235a84f9107c734970a5c1e5"
+  ],
+  "Maelstrom/Episode7/E7M6/EnterpriseAI.pyc": [
+   "02ce68bf61963e02b1111b20f4d6df68"
+  ],
+  "Maelstrom/Episode7/E7M6/FreighterAI.pyc": [
+   "190a4c579a78825911c97a6f1ec7adbf"
+  ],
+  "Maelstrom/Episode7/E7M6/Starbase12_P.pyc": [
+   "e66e24714e1d8b6b9eed95ea73b9abc5"
+  ],
+  "Maelstrom/Episode7/E7M6/WarpAwayAI.pyc": [
+   "5c34ead706d2e775040523a1a1037f98"
+  ],
+  "Maelstrom/Episode7/E7M6/Warp_P.pyc": [
+   "eccb8de039606618429a0a431e48a60e"
+  ],
+  "Maelstrom/Episode7/E7M6/__init__.pyc": [
+   "3aec7157b7a76c8bfb14d26b2f3f6792"
+  ],
+  "Maelstrom/Episode7/Episode7.pyc": [
+   "5466ceffb06ac37ee61c6fee1d950666"
+  ],
+  "Maelstrom/Episode7/__init__.pyc": [
+   "00f7aec7131c835dfa31e7378410e30d"
+  ],
+  "Maelstrom/Episode8/E8M1/AkiraAI.pyc": [
+   "287e4763e0645414f91a3fa0df1aea76"
+  ],
+  "Maelstrom/Episode8/E8M1/AkiraAI2.pyc": [
+   "1bc4186071f853891073e857f9fc3367"
+  ],
+  "Maelstrom/Episode8/E8M1/E8M1.pyc": [
+   "c37ca13a48036cbfaca178029dd6b5c1"
+  ],
+  "Maelstrom/Episode8/E8M1/E8M1_P.pyc": [
+   "3061bd4be25b0f9e2a6b3443c15deb65"
+  ],
+  "Maelstrom/Episode8/E8M1/EBridge_P.pyc": [
+   "ddb2e7a88e6419bc23201abd28a830fe"
+  ],
+  "Maelstrom/Episode8/E8M1/EnemyAI.pyc": [
+   "5245c3cf7f248e72c00ed052f3b183d3"
+  ],
+  "Maelstrom/Episode8/E8M1/Enemy_P.pyc": [
+   "1690fb9bc4593c32eaa85308e9f1be39"
+  ],
+  "Maelstrom/Episode8/E8M1/FriendlyAI.pyc": [
+   "ff2f9c49dbddba84efe0b590c9585623"
+  ],
+  "Maelstrom/Episode8/E8M1/FriendlyBelaruz1AI.pyc": [
+   "b2057779c9ce689e4dcb75a3e545a6c2"
+  ],
+  "Maelstrom/Episode8/E8M1/FriendlyCebalrai1AI.pyc": [
+   "2ac8d0be703e7362c8e550b360fe83f7"
+  ],
+  "Maelstrom/Episode8/E8M1/FriendlyRiha1AI.pyc": [
+   "372868459b4f0ac551718047d6193310"
+  ],
+  "Maelstrom/Episode8/E8M1/FriendlyRiha1AI2.pyc": [
+   "b0dc5a0d10aa2437875c75b096e6ece3"
+  ],
+  "Maelstrom/Episode8/E8M1/GalorAI.pyc": [
+   "4d6e2c0d1f8e6a52767328c00343a403"
+  ],
+  "Maelstrom/Episode8/E8M1/KessokHeavyAI.pyc": [
+   "488bd760a1f58fba7f416330f604234e"
+  ],
+  "Maelstrom/Episode8/E8M1/KessokLightAI.pyc": [
+   "2834052376fb80a82d5b026cfd1248fc"
+  ],
+  "Maelstrom/Episode8/E8M1/StayAI.pyc": [
+   "12fff26dad480a4175280c8ab64baac3"
+  ],
+  "Maelstrom/Episode8/E8M1/WarpAI.pyc": [
+   "393a03d2c4c64c61ff15e78a747c0853"
+  ],
+  "Maelstrom/Episode8/E8M1/__init__.pyc": [
+   "1f9cd156124ad0aa24897d7d090638d1"
+  ],
+  "Maelstrom/Episode8/E8M2/AttackPlayerAI.pyc": [
+   "bb60edbb21a9ecf0907ca0f80c5c000e"
+  ],
+  "Maelstrom/Episode8/E8M2/AttackSolarformerAI.pyc": [
+   "44a98fd3b5dd475e2e3b8d49a05b0770"
+  ],
+  "Maelstrom/Episode8/E8M2/E8M2.pyc": [
+   "184743093ac9f580c7d325b8d9005a4d"
+  ],
+  "Maelstrom/Episode8/E8M2/E8M2_P.pyc": [
+   "661dad7b4f1fa967ad1b43a890ff1e09"
+  ],
+  "Maelstrom/Episode8/E8M2/EBridge_P.pyc": [
+   "34dfa1abaaf7e1d8a2bc719656b76b68"
+  ],
+  "Maelstrom/Episode8/E8M2/EnemyAI.pyc": [
+   "d72f83f99608d1776422d0a6d7dced6d"
+  ],
+  "Maelstrom/Episode8/E8M2/FleeAI.pyc": [
+   "a58d44d8ff232a783a8015e500d527f9"
+  ],
+  "Maelstrom/Episode8/E8M2/Friendly2AI.pyc": [
+   "8558b2db0d8c650643d880aa361574ca"
+  ],
+  "Maelstrom/Episode8/E8M2/FriendlyAI.pyc": [
+   "d2274975eb775becf284a95b51d2fca8"
+  ],
+  "Maelstrom/Episode8/E8M2/HybridAI.pyc": [
+   "3bd7b58076ac44b2e99cbcf8acd3e780"
+  ],
+  "Maelstrom/Episode8/E8M2/HybridFirstWaveAI.pyc": [
+   "c088a21565e1e82df038c1776aeccaa8"
+  ],
+  "Maelstrom/Episode8/E8M2/OrbitColonyAI.pyc": [
+   "3fb7480abf503c210157d505cd7dd791"
+  ],
+  "Maelstrom/Episode8/E8M2/OrbitSolarformerAI.pyc": [
+   "45bae6c1464f05f1413cee72b02d0d29"
+  ],
+  "Maelstrom/Episode8/E8M2/StayAI.pyc": [
+   "d0d1b49536a305fa9661d23a03bf2b2c"
+  ],
+  "Maelstrom/Episode8/E8M2/WarpToDeepSpaceAI.pyc": [
+   "ddee9910c935cf76e4baa9fac75b9bcb"
+  ],
+  "Maelstrom/Episode8/E8M2/WarpToOD1AI.pyc": [
+   "d0b8845ac0885ad09ab4fe3516dd414e"
+  ],
+  "Maelstrom/Episode8/E8M2/WarpToOD3AI.pyc": [
+   "2f326aa32740d188074b9bc52f219ab0"
+  ],
+  "Maelstrom/Episode8/E8M2/__init__.pyc": [
+   "268c76e39509db008a26e3cb6b0929fb"
+  ],
+  "Maelstrom/Episode8/Episode8.pyc": [
+   "2d0b7a888a68edc7555308a7497bd63d"
+  ],
+  "Maelstrom/Episode8/__init__.pyc": [
+   "0c618159e7d079c01d0e9353b702cd68"
+  ],
+  "Maelstrom/Maelstrom.pyc": [
+   "342a8344c4474f990a414fca01325ae5"
+  ],
+  "Maelstrom/__init__.pyc": [
+   "9a9a193829f7f3c915dae49e4ad416bb"
+  ],
+  "MainMenu/CardSpecificSetup.pyc": [
+   "206fd3cf3106d77f9c480a64906e0d62"
+  ],
+  "MainMenu/KeyboardConfig.pyc": [
+   "4a776cc2541d93f75a96623d4a65d9ca"
+  ],
+  "MainMenu/__init__.pyc": [
+   "6349fceb56fb98cab6d974df3a555725"
+  ],
+  "MainMenu/mainmenu.pyc": [
+   "225bae24c0081f4d7a93ad32e931911d"
+  ],
+  "MakeModuleReferencesLocal.pyc": [
+   "693deff8b8a4ceb77e8bad138ead123c"
+  ],
+  "MakePYC.pyc": [
+   "077d3762d926e363e3cad37c02fb949a"
+  ],
+  "MapModeInterfaceHandlers.pyc": [
+   "095b64440ec0ef88d1c962eb8ef14b4d"
+  ],
+  "MissionLib.pyc": [
+   "ccd60b0b2488285b5e580ce75ccea301"
+  ],
+  "Multiplayer/Episode/Episode.pyc": [
+   "851aba1fc784cc01096c3f539b80acee"
+  ],
+  "Multiplayer/Episode/Mission1/Mission1.pyc": [
+   "230f560fe12339245d0aada7c3ddeacc"
+  ],
+  "Multiplayer/Episode/Mission1/Mission1Menus.pyc": [
+   "9324f3184a6e2670b73f158463df49f6"
+  ],
+  "Multiplayer/Episode/Mission1/Mission1Name.pyc": [
+   "6e7428e2c431b965cba55a121dfb82b0"
+  ],
+  "Multiplayer/Episode/Mission1/__init__.pyc": [
+   "309a6b3cdecb046ca0e4108cc7159cb6"
+  ],
+  "Multiplayer/Episode/Mission2/Mission2.pyc": [
+   "5bca8777844c67ec858d5233a63f0dcd"
+  ],
+  "Multiplayer/Episode/Mission2/Mission2Menus.pyc": [
+   "9b8eeb4ec75262010df84f7dfff99394"
+  ],
+  "Multiplayer/Episode/Mission2/Mission2Name.pyc": [
+   "0ac75bc22fde73f33b4c3a41d1471019"
+  ],
+  "Multiplayer/Episode/Mission2/__init__.pyc": [
+   "8118977f92a0eb78c8460192cdad6697"
+  ],
+  "Multiplayer/Episode/Mission3/Mission3.pyc": [
+   "308e392cb6dac2c6bf0c019907457044"
+  ],
+  "Multiplayer/Episode/Mission3/Mission3Menus.pyc": [
+   "2ca902241004f7e4c900da443c3299d3"
+  ],
+  "Multiplayer/Episode/Mission3/Mission3Name.pyc": [
+   "51b3b3c97983a48ed0f5a6a0291923e7"
+  ],
+  "Multiplayer/Episode/Mission3/__init__.pyc": [
+   "9df776449b173b1c027b449dcbe80a33"
+  ],
+  "Multiplayer/Episode/Mission5/Mission5.pyc": [
+   "c1fbbed9fd8d6907e6c850a98eb2b3a4"
+  ],
+  "Multiplayer/Episode/Mission5/Mission5Menus.pyc": [
+   "fa47d47c1d5625b3989b3f1774f403cb"
+  ],
+  "Multiplayer/Episode/Mission5/Mission5Name.pyc": [
+   "8061e01b7ea472466a6cc0039494610c"
+  ],
+  "Multiplayer/Episode/Mission5/StarbaseAI.pyc": [
+   "31dec1a89f256349ad7d4f77b6964be1"
+  ],
+  "Multiplayer/Episode/Mission5/__init__.pyc": [
+   "96ea57f0c59327d1bed2f6154a440ebf"
+  ],
+  "Multiplayer/Episode/__init__.pyc": [
+   "871513e0891e4ae6e29a59b213716d1e"
+  ],
+  "Multiplayer/MissionMenusShared.pyc": [
+   "73311cae5fe94d0ebd362b60e08012f0"
+  ],
+  "Multiplayer/MissionShared.pyc": [
+   "015b9b797d25e1f509be165c4a4429e5"
+  ],
+  "Multiplayer/Modifier.pyc": [
+   "bbb45e0176323fc7766942abbc99ae25"
+  ],
+  "Multiplayer/MultiplayerGame.pyc": [
+   "453aff12eb082713bc23a22de525d63f"
+  ],
+  "Multiplayer/MultiplayerMenus.pyc": [
+   "a2b3f7eb7dde381dc507ec83e83470f0"
+  ],
+  "Multiplayer/SpeciesToShip.pyc": [
+   "4c517d54a2e27dec81ef5403d52379f4"
+  ],
+  "Multiplayer/SpeciesToSystem.pyc": [
+   "00c77f4f14a84dd3daa3ac672a23e191"
+  ],
+  "Multiplayer/SpeciesToTorp.pyc": [
+   "759337f5305ab9f78c358f9f30d87e49"
+  ],
+  "Multiplayer/__init__.pyc": [
+   "43ac5ec2afb5df089452c5d4290b1b19"
+  ],
+  "MultiplayerInterfaceHandlers.pyc": [
+   "5e6a3d028c79e011cf2f7495f85ad344"
+  ],
+  "OutputEventTypes.pyc": [
+   "1ac1e068758eb84a09038cd4396a8b9a"
+  ],
+  "QuickBattle/QuickBattle.pyc": [
+   "2ae49b9a7b7b88e23d324494ed70cd47"
+  ],
+  "QuickBattle/QuickBattleAI.pyc": [
+   "69a4e5bb35a2684f9da0053e1148cacc"
+  ],
+  "QuickBattle/QuickBattleEpisode.pyc": [
+   "b98ecdd62bf1af0a32199bac6ea71d76"
+  ],
+  "QuickBattle/QuickBattleFriendlyAI.pyc": [
+   "a319adcd4110c19bb4e2d5b6047e7756"
+  ],
+  "QuickBattle/QuickBattleGame.pyc": [
+   "b33b2029ae7bf8e31a16ce44131b3e0d"
+  ],
+  "QuickBattle/StarbaseAI.pyc": [
+   "80e322dc8629f85bcc0d07df8cd49ecb"
+  ],
+  "QuickBattle/StarbaseFriendlyAI.pyc": [
+   "1e20c7ef36abbaf5acdfcc80758bab83"
+  ],
+  "QuickBattle/__init__.pyc": [
+   "90f54ac338af3dd336fe3abccbb1269c"
+  ],
+  "SSDiag.pyc": [
+   "a6782ff45daacfb36cb6e72091a625c6"
+  ],
+  "SimpleAPI.pyc": [
+   "8adc7b36c62c04edcb147f2a8f6d6171"
+  ],
+  "SoundConfig.pyc": [
+   "43adcd64d59cb792092a52cfe6e30bc2"
+  ],
+  "StylizedWindow.pyc": [
+   "2d1a1e9bb72d527fed9e762e5ddd4414"
+  ],
+  "Systems/Albirea/Albirea.pyc": [
+   "57ed5aa3d33d5c8bebe2b809ceb7cc45"
+  ],
+  "Systems/Albirea/Albirea1.pyc": [
+   "4412cc898eb3743b0464fde488069e16"
+  ],
+  "Systems/Albirea/Albirea1_S.pyc": [
+   "904ea23330ad940e3528b048b2bf1eab"
+  ],
+  "Systems/Albirea/Albirea2.pyc": [
+   "0007407b2853557ef96ba65f63af153d"
+  ],
+  "Systems/Albirea/Albirea2_S.pyc": [
+   "9f1b4314d12f31a0ef50b8defd2a7023"
+  ],
+  "Systems/Albirea/Albirea3.pyc": [
+   "f1c13cbe608f58f39d3832ab70261fb9"
+  ],
+  "Systems/Albirea/Albirea3_S.pyc": [
+   "8c6097f37208f06e0be534343c9c2f09"
+  ],
+  "Systems/Albirea/__init__.pyc": [
+   "7100b7938ddc87b1bd7d82aa41d90277"
+  ],
+  "Systems/Alioth/Alioth.pyc": [
+   "e95a2c00319cd843d87f845361e5ca59"
+  ],
+  "Systems/Alioth/Alioth1.pyc": [
+   "d98430a56350ad3132c9293acf96abb5"
+  ],
+  "Systems/Alioth/Alioth1_S.pyc": [
+   "5a87ed09c6002dd733f22ff096791df5"
+  ],
+  "Systems/Alioth/Alioth2.pyc": [
+   "3219be49d7c04afdf0dd2151347a01ce"
+  ],
+  "Systems/Alioth/Alioth2_S.pyc": [
+   "f33dea14338b4362830f0cc80c13352d"
+  ],
+  "Systems/Alioth/Alioth3.pyc": [
+   "623983e64cb20af701f425d290500d18"
+  ],
+  "Systems/Alioth/Alioth3_S.pyc": [
+   "18a85127595e15fbd8b571eec03228bf"
+  ],
+  "Systems/Alioth/Alioth4.pyc": [
+   "507599e601446a7e646efdc77f063b2d"
+  ],
+  "Systems/Alioth/Alioth4_S.pyc": [
+   "2ac9b00d2572a7997f330effcef6ce95"
+  ],
+  "Systems/Alioth/Alioth5.pyc": [
+   "164740b5b6e9d16b868d7104cd8354ed"
+  ],
+  "Systems/Alioth/Alioth5_S.pyc": [
+   "f5cbc33f0e2fa5c44fa9af31047c1112"
+  ],
+  "Systems/Alioth/Alioth6.pyc": [
+   "eea7d5468b8118fc7daa5664fbba50a6"
+  ],
+  "Systems/Alioth/Alioth6_S.pyc": [
+   "f291dd08abb1b66109c439e807decfc4"
+  ],
+  "Systems/Alioth/Alioth7.pyc": [
+   "225cbef3252df11e976d23383d7f64ee"
+  ],
+  "Systems/Alioth/Alioth7_S.pyc": [
+   "4c5c1bc6062c014f1c952044cdf957a9"
+  ],
+  "Systems/Alioth/Alioth8.pyc": [
+   "6bff26723e5cd37a44f9d8067fe20892"
+  ],
+  "Systems/Alioth/Alioth8_S.pyc": [
+   "fd06c526080e2aa15101a216464f9bda"
+  ],
+  "Systems/Alioth/__init__.pyc": [
+   "7ec989bf49325c7d19234b1978b637f5"
+  ],
+  "Systems/Artrus/Artrus.pyc": [
+   "c49f00f563506b8ede2b21e83a19b40e"
+  ],
+  "Systems/Artrus/Artrus1.pyc": [
+   "41a18df9da58e3280952869962bafc2a"
+  ],
+  "Systems/Artrus/Artrus1_S.pyc": [
+   "1ab0b4e85febce637d8018c0341b7602"
+  ],
+  "Systems/Artrus/Artrus2.pyc": [
+   "df33cdb4ad38bd938b0557c9fada0e29"
+  ],
+  "Systems/Artrus/Artrus2_S.pyc": [
+   "2732b28300d5db2bd24013f782d22d3e"
+  ],
+  "Systems/Artrus/Artrus3.pyc": [
+   "2ed64421764af14f34e8b7d32bef2c29"
+  ],
+  "Systems/Artrus/Artrus3_S.pyc": [
+   "5985c9fecfa83f52f00a7b505645f321"
+  ],
+  "Systems/Artrus/__init__.pyc": [
+   "6a1441b4e205bf2718c7eb4fa8ce4add"
+  ],
+  "Systems/Ascella/Ascella.pyc": [
+   "0e50e16f705fd8322c23ffcd1a7a7033"
+  ],
+  "Systems/Ascella/Ascella1.pyc": [
+   "f9592fbd1f9a6df450631bbbb6a242a0"
+  ],
+  "Systems/Ascella/Ascella1_S.pyc": [
+   "d0602e6203657c32c79257bafa391854"
+  ],
+  "Systems/Ascella/Ascella2.pyc": [
+   "cc5ed2a443b7e5e4429ed8c866b80320"
+  ],
+  "Systems/Ascella/Ascella2_S.pyc": [
+   "c0fbff9fc448fc04392d0ab7bf0623c3"
+  ],
+  "Systems/Ascella/Ascella3.pyc": [
+   "38b1026370db3ab6ee3f07f17e6b98c0"
+  ],
+  "Systems/Ascella/Ascella3_S.pyc": [
+   "56c4f4454fd91e51d02aebf1ff521b34"
+  ],
+  "Systems/Ascella/Ascella4.pyc": [
+   "53c40040d301156555340808754632f6"
+  ],
+  "Systems/Ascella/Ascella4_S.pyc": [
+   "efff11a614bbf92f13cfd50f2bc13789"
+  ],
+  "Systems/Ascella/Ascella5.pyc": [
+   "c38314517c8333282a9343944fcd17f8"
+  ],
+  "Systems/Ascella/Ascella5_S.pyc": [
+   "c9fb8f09087e96605f632ae264cd3aa7"
+  ],
+  "Systems/Ascella/__init__.pyc": [
+   "f7d80ba38f383b036c94fc4fe3369909"
+  ],
+  "Systems/Belaruz/Belaruz.pyc": [
+   "68ef17dd8ae73ca43dca8b171d573c0a"
+  ],
+  "Systems/Belaruz/Belaruz1.pyc": [
+   "84021e261daa8713397ac49d92ac45c6"
+  ],
+  "Systems/Belaruz/Belaruz1_S.pyc": [
+   "b3bb2f426bccdcb173782ee4ef764b87"
+  ],
+  "Systems/Belaruz/Belaruz2.pyc": [
+   "8e76dfb7a642c26c5a7e87377e1387f4"
+  ],
+  "Systems/Belaruz/Belaruz2_S.pyc": [
+   "66f014436c6bd3ef7d665382b6322fda"
+  ],
+  "Systems/Belaruz/Belaruz3.pyc": [
+   "208d4a5ee9a1f3629322198c4f18f9b2"
+  ],
+  "Systems/Belaruz/Belaruz3_S.pyc": [
+   "979f3994a6b7bb43c56b7138f76a4b38"
+  ],
+  "Systems/Belaruz/Belaruz4.pyc": [
+   "87a6aed7fe8670360f1ed2ddc203ced9"
+  ],
+  "Systems/Belaruz/Belaruz4_S.pyc": [
+   "f5f652b92ae8ffe500c6a5266851625d"
+  ],
+  "Systems/Belaruz/__init__.pyc": [
+   "a325e5036041e11d68a16f51a4313fd1"
+  ],
+  "Systems/Beol/Beol.pyc": [
+   "c3d9129946ea9d13fd9235196861e953"
+  ],
+  "Systems/Beol/Beol1.pyc": [
+   "7fe2538fd2b674dbd3ec20b1ae958701"
+  ],
+  "Systems/Beol/Beol1_S.pyc": [
+   "d5806d541276d9b647092f308e74b17a"
+  ],
+  "Systems/Beol/Beol2.pyc": [
+   "50160a8b5f63d6c25a163fac45df86f3"
+  ],
+  "Systems/Beol/Beol2_S.pyc": [
+   "c0497925bcabe2642552559c27ab6b50"
+  ],
+  "Systems/Beol/Beol3.pyc": [
+   "93f8d1a467d1541a70599ff3132beb55"
+  ],
+  "Systems/Beol/Beol3_S.pyc": [
+   "7ac7a58b9c09e2d74de5836ec91b2188"
+  ],
+  "Systems/Beol/Beol4.pyc": [
+   "f8007a7336d83bd69b08312cdd19bf30"
+  ],
+  "Systems/Beol/Beol4_S.pyc": [
+   "5396726f0702b2c1c3f37aff9efbf0d7"
+  ],
+  "Systems/Beol/__init__.pyc": [
+   "9892fce355bc88bdaa6383fcb2d7f657"
+  ],
+  "Systems/Biranu/Biranu.pyc": [
+   "656f41d0c894e4466b333568385f7c02"
+  ],
+  "Systems/Biranu/Biranu1.pyc": [
+   "fc798fa19d0f952f464f1f46960abeb1"
+  ],
+  "Systems/Biranu/Biranu1_S.pyc": [
+   "afdc7f8d812f6ff56361d68fd1ba1969"
+  ],
+  "Systems/Biranu/Biranu2.pyc": [
+   "45327c255974fe00a713afe37338aab5"
+  ],
+  "Systems/Biranu/Biranu2_S.pyc": [
+   "338c09f37a50ce59af3acc125ca1e2b1"
+  ],
+  "Systems/Biranu/__init__.pyc": [
+   "65146e1be05df9f8a2e04d4a2d40203a"
+  ],
+  "Systems/Cebalrai/Cebalrai.pyc": [
+   "0aa0f0ef8a053c8972e25c6db32dccea"
+  ],
+  "Systems/Cebalrai/Cebalrai1.pyc": [
+   "5e8d26c76f63d740ab57eff9bf193860"
+  ],
+  "Systems/Cebalrai/Cebalrai1_S.pyc": [
+   "4715e20500793d0768545d10ab5a7f63"
+  ],
+  "Systems/Cebalrai/Cebalrai2.pyc": [
+   "381f351a7787ab48b60ce728601e734b"
+  ],
+  "Systems/Cebalrai/Cebalrai2_S.pyc": [
+   "6c267676efe3ee7bc15190aed1b87b5d"
+  ],
+  "Systems/Cebalrai/Cebalrai3.pyc": [
+   "d8566fe69f68e8b7b3b9a0e8d8386de6"
+  ],
+  "Systems/Cebalrai/Cebalrai3_S.pyc": [
+   "9e366072479fec02d13eae83d23413eb"
+  ],
+  "Systems/Cebalrai/__init__.pyc": [
+   "033477675c75570040a1897d428b652a"
+  ],
+  "Systems/Chambana/Chambana.pyc": [
+   "8c651a19c0e6415ec4963a68806a230a"
+  ],
+  "Systems/Chambana/Chambana1.pyc": [
+   "d9a9eb3ec70a5ad1dd2e7f6bd6b24219"
+  ],
+  "Systems/Chambana/Chambana1_S.pyc": [
+   "705ec66347db91e120cce933f6041b4c"
+  ],
+  "Systems/Chambana/Chambana2.pyc": [
+   "2868b18e4c5e8274584bd5e2aa8bd675"
+  ],
+  "Systems/Chambana/Chambana2_S.pyc": [
+   "ff5a2a1d78565fd3255edf3c18ed85ee"
+  ],
+  "Systems/Chambana/__init__.pyc": [
+   "8dddeaf94a16a465d33a0d1306e3cea8"
+  ],
+  "Systems/DeepSpace/DeepSpace.pyc": [
+   "378a460e29ff824feec31a42aaeae0fa"
+  ],
+  "Systems/DeepSpace/__init__.pyc": [
+   "0eb2527c94384b96f30268917a96ee11"
+  ],
+  "Systems/DryDock/DryDock.pyc": [
+   "6f70498858d2c9a42968fd373307f06b"
+  ],
+  "Systems/DryDock/DryDockSystem.pyc": [
+   "294af45a348d89f87fb739ea5d7ff200"
+  ],
+  "Systems/DryDock/DryDock_S.pyc": [
+   "f5a3220d9615481593276bde74df8416"
+  ],
+  "Systems/DryDock/__init__.pyc": [
+   "3037e63f8a3bfe3a97b8585d2e0a9df2"
+  ],
+  "Systems/Geble/Geble.pyc": [
+   "d91d1a69be02277d26598db3c1562b76"
+  ],
+  "Systems/Geble/Geble1.pyc": [
+   "16a221f27793dedbb04fdcdd86d5188b"
+  ],
+  "Systems/Geble/Geble1_S.pyc": [
+   "dbf90d902ecf0430a962d10632464e93"
+  ],
+  "Systems/Geble/Geble2.pyc": [
+   "e2d6bfbd1f225206ef7eabb83d14c9a1"
+  ],
+  "Systems/Geble/Geble2_S.pyc": [
+   "8810fc9f441e3d3430e40b7047343bca"
+  ],
+  "Systems/Geble/Geble3.pyc": [
+   "5b8f9e10b2bc7bbe6db47d017301e203"
+  ],
+  "Systems/Geble/Geble3_S.pyc": [
+   "c8da5c1470dd0d1822c74d2e83ce2a21"
+  ],
+  "Systems/Geble/Geble4.pyc": [
+   "97d5044ca0d44a2780657183abe41bd8"
+  ],
+  "Systems/Geble/Geble4_S.pyc": [
+   "e4276b9961255321487a73d025d7c552"
+  ],
+  "Systems/Geble/__init__.pyc": [
+   "709af81e290e9e089cdeb86107d703bc"
+  ],
+  "Systems/Itari/Itari.pyc": [
+   "312fa9ff2119f1dc2c340c42988e503d"
+  ],
+  "Systems/Itari/Itari1.pyc": [
+   "e4359c755bc57d672290c7a8ab008ca7"
+  ],
+  "Systems/Itari/Itari1_S.pyc": [
+   "d023efd2020bc736b6fe921cffa94c78"
+  ],
+  "Systems/Itari/Itari2.pyc": [
+   "37d2b092401618220469f378be912905"
+  ],
+  "Systems/Itari/Itari2_S.pyc": [
+   "b431138a12a5ca746fea1887bcf6a62d"
+  ],
+  "Systems/Itari/Itari3.pyc": [
+   "4a7d931870cb7705ee6a1a6585723b30"
+  ],
+  "Systems/Itari/Itari3_S.pyc": [
+   "83b1deb63e7a1d82c2599df43dc4866d"
+  ],
+  "Systems/Itari/Itari4.pyc": [
+   "888406eecf2b18673f00eee5e9e63f96"
+  ],
+  "Systems/Itari/Itari4_S.pyc": [
+   "68bf292e5a3afe6b2df683e5ee0490c7"
+  ],
+  "Systems/Itari/Itari5.pyc": [
+   "1d608ec45a705f37dca7b30c4586f3c7"
+  ],
+  "Systems/Itari/Itari5_S.pyc": [
+   "a31f81febebfa5375f893072de4b5636"
+  ],
+  "Systems/Itari/Itari6.pyc": [
+   "4f61e5e75328938412459b8a086aab6d"
+  ],
+  "Systems/Itari/Itari6_S.pyc": [
+   "01e30c66911fbabc0be5716b7ec69629"
+  ],
+  "Systems/Itari/Itari7.pyc": [
+   "15a5b880b7a9006069f21a79f3dbe0c6"
+  ],
+  "Systems/Itari/Itari7_S.pyc": [
+   "26a5f75272062aead2291f2fcb18ac69"
+  ],
+  "Systems/Itari/Itari8.pyc": [
+   "c2da77639170b6c0c3c610fbb3aff08a"
+  ],
+  "Systems/Itari/Itari8_S.pyc": [
+   "c0d9e1cfb6d18119bd209df770fbbee9"
+  ],
+  "Systems/Itari/__init__.pyc": [
+   "ca95ab60da8384befd7b26a8fa6e76b8"
+  ],
+  "Systems/Multi1/Multi1.pyc": [
+   "c8d64884dd52c8e64851495be264b125"
+  ],
+  "Systems/Multi1/__init__.pyc": [
+   "14f0dfe7d4ac50709149cca5a1a93a42"
+  ],
+  "Systems/Multi2/Multi2.pyc": [
+   "c531ac2eacf1da16b0d4306d6fbc9565"
+  ],
+  "Systems/Multi2/__init__.pyc": [
+   "4ff1dcd069dc1293f6e1027ef74f798b"
+  ],
+  "Systems/Multi2/multi2_S.pyc": [
+   "040997893966e9d782d2cdfd3e3154cf"
+  ],
+  "Systems/Multi3/Multi3.pyc": [
+   "6fd94196c9b996f23186ce11584f7c00"
+  ],
+  "Systems/Multi3/__init__.pyc": [
+   "25634fe59eef412ca118828e4c6b05d6"
+  ],
+  "Systems/Multi3/multi3_S.pyc": [
+   "051951a3a8ef06ecb9b5a16a3899bdf8"
+  ],
+  "Systems/Multi4/Multi4.pyc": [
+   "43475b538cba1be3da60d69282c20335"
+  ],
+  "Systems/Multi4/Multi4_S.pyc": [
+   "3ed5ccdf2c0863616ea61a14edd0719c"
+  ],
+  "Systems/Multi4/__init__.pyc": [
+   "fd8f461a7b6246f0300a835309e15af3"
+  ],
+  "Systems/Multi5/Multi5.pyc": [
+   "42930089ae242b23f253c06ba6e9d283"
+  ],
+  "Systems/Multi5/Multi5_S.pyc": [
+   "d7d68c19d1dd8a6daa54ef9acb4fce1c"
+  ],
+  "Systems/Multi5/__init__.pyc": [
+   "bc7b8c78e702a0a0f5bb55b4d4c39920"
+  ],
+  "Systems/Multi6/Multi6.pyc": [
+   "4577c3bede936c6219c7ebce956fdf40"
+  ],
+  "Systems/Multi6/Multi6_S.pyc": [
+   "fad837f446ac63d8fc1fa2267b83ca2e"
+  ],
+  "Systems/Multi6/__init__.pyc": [
+   "0665971932f5a40fa4ff7e0961d56d13"
+  ],
+  "Systems/Multi7/Multi7.pyc": [
+   "0a08c669a1c17a7680d1e218d5742200"
+  ],
+  "Systems/Multi7/Multi7_S.pyc": [
+   "d016aabe04c92ebd63a99a3ab413bc06"
+  ],
+  "Systems/Multi7/__init__.pyc": [
+   "2b6d23e811b6a1473e2f857b59ab75c4"
+  ],
+  "Systems/Nepenthe/Nepenthe.pyc": [
+   "ea6e5db7fb7cf3dc48e4c1337f7ca5bb"
+  ],
+  "Systems/Nepenthe/Nepenthe1.pyc": [
+   "72b21574c3889430c3000cf129228ab3"
+  ],
+  "Systems/Nepenthe/Nepenthe1_S.pyc": [
+   "61c5f18ef644c6a448cee197be3cf2ae"
+  ],
+  "Systems/Nepenthe/Nepenthe2.pyc": [
+   "2f8f6c93be182fb3d556f3cea33c08c7"
+  ],
+  "Systems/Nepenthe/Nepenthe2_S.pyc": [
+   "ca490bddeda7b312c13688e40fec7c0d"
+  ],
+  "Systems/Nepenthe/Nepenthe3.pyc": [
+   "c36cd671fac20b7d73c8d1ca2d6d1426"
+  ],
+  "Systems/Nepenthe/Nepenthe3_S.pyc": [
+   "6bfbfdc25316cd40c9a1a1c9c0785df0"
+  ],
+  "Systems/Nepenthe/__init__.pyc": [
+   "5bd58e8cf4fd7b5f92c6d9b987b079bb"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis.pyc": [
+   "b362db93ca8be03cfd6de027049f3bc2"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis1.pyc": [
+   "1d320502bca4555b0be2646a8396f697"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis1_S.pyc": [
+   "77acfa4b5e39315651866c248c75e11a"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis2.pyc": [
+   "db50efd8b8efc8d8e297a3e8e8751d54"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis2_S.pyc": [
+   "a465410c87626b6f6910366e37c6c870"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis3.pyc": [
+   "1967eadb4ceb775d46242cf422ba38c9"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis3_S.pyc": [
+   "227743cfc49f4b0606554ff32b09a768"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis4.pyc": [
+   "3d350cb2c3a4386144458f62006fc84d"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis4_S.pyc": [
+   "ba007fe73a6db8833bc9182d4549321e"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis5.pyc": [
+   "31eb463ac4bf88ce358f2b10ccb62d85"
+  ],
+  "Systems/OmegaDraconis/OmegaDraconis5_S.pyc": [
+   "6bf760ad7b5e9b75119267ba639bee7f"
+  ],
+  "Systems/OmegaDraconis/__init__.pyc": [
+   "c634cbd38e2e1a1c880582a671f7e34c"
+  ],
+  "Systems/Ona/Ona.pyc": [
+   "24e46cc390d633f04e61657b2884e86a"
+  ],
+  "Systems/Ona/Ona1.pyc": [
+   "f602e75838d382dffced3fd18a4976cd"
+  ],
+  "Systems/Ona/Ona1_S.pyc": [
+   "17063218bc28e7cb6aca0d6b3eac7095"
+  ],
+  "Systems/Ona/Ona2.pyc": [
+   "ef824b1402aa42247aec9932d3d9cccd"
+  ],
+  "Systems/Ona/Ona2_S.pyc": [
+   "1d9f2613fd5a236e79c6167aebd95004"
+  ],
+  "Systems/Ona/Ona3.pyc": [
+   "5128654743555cadb948760f19909a15"
+  ],
+  "Systems/Ona/Ona3_S.pyc": [
+   "d1de6f57837d02646f9b9c8ebdd438c6"
+  ],
+  "Systems/Ona/__init__.pyc": [
+   "663ceb4ffca29b53e12fe948ee39b08b"
+  ],
+  "Systems/Poseidon/Poseidon.pyc": [
+   "5ee4e651c938d3552fb1f6b308105601"
+  ],
+  "Systems/Poseidon/Poseidon1.pyc": [
+   "626961ca50e3dd423726382e0b46e692"
+  ],
+  "Systems/Poseidon/Poseidon1_S.pyc": [
+   "5cb7c1dd79489fc639c208535f50b234"
+  ],
+  "Systems/Poseidon/Poseidon2.pyc": [
+   "f8a7477761043a9f38873e2d291554a5"
+  ],
+  "Systems/Poseidon/Poseidon2_S.pyc": [
+   "61cc1dd62fdd4d43af4a2d3963316d2e"
+  ],
+  "Systems/Poseidon/__init__.pyc": [
+   "7a06daa56afc36143df8a91d77dfc692"
+  ],
+  "Systems/Prendel/Prendel.pyc": [
+   "66706b692f775bf38fb0846c3d5329b5"
+  ],
+  "Systems/Prendel/Prendel1.pyc": [
+   "7b6ba71bbf484fec7e1ac554a342ea3c"
+  ],
+  "Systems/Prendel/Prendel1_S.pyc": [
+   "730ec948a8a1cc0242b8b64bf9829f88"
+  ],
+  "Systems/Prendel/Prendel2.pyc": [
+   "fdd84ec819530d917ca11e95124d8ba6"
+  ],
+  "Systems/Prendel/Prendel2_S.pyc": [
+   "dd445f7e9edd08337357e51e616e5306"
+  ],
+  "Systems/Prendel/Prendel3.pyc": [
+   "4bde36695291d337aa216baf2e3c55dd"
+  ],
+  "Systems/Prendel/Prendel3_S.pyc": [
+   "3ab17e71cd8b3dce97e2b0d1e645f63b"
+  ],
+  "Systems/Prendel/Prendel4.pyc": [
+   "60655060f412df49f5c65ef9ec743d3f"
+  ],
+  "Systems/Prendel/Prendel4_S.pyc": [
+   "d9dd93f4a578e22306da1183c08cd309"
+  ],
+  "Systems/Prendel/Prendel5.pyc": [
+   "cd83fdf99f51d212aef875db0b7bc553"
+  ],
+  "Systems/Prendel/Prendel5_S.pyc": [
+   "d8f1c82ce99d75e050a5e7b29b5796ef"
+  ],
+  "Systems/Prendel/__init__.pyc": [
+   "ab2d3a2d71d58d56471c79aeb1033635"
+  ],
+  "Systems/QuickBattle/QuickBattleRegion.pyc": [
+   "d74e4ae34aaa176b7e12f0037ad0f3da"
+  ],
+  "Systems/QuickBattle/QuickBattleRegion_S.pyc": [
+   "c38e54c3c484af89f34d2bb525018d0a"
+  ],
+  "Systems/QuickBattle/QuickBattleSystem.pyc": [
+   "de737efbd14833acc14683d5abd2014c"
+  ],
+  "Systems/QuickBattle/__init__.pyc": [
+   "a9ef8bd6afe41a5e56f686aaa77e4507"
+  ],
+  "Systems/Riha/Riha.pyc": [
+   "7a63b1d76131f20578fdd5647e14446e"
+  ],
+  "Systems/Riha/Riha1.pyc": [
+   "d48c4b7c5f83b010300c2cf7662309d1"
+  ],
+  "Systems/Riha/Riha1_S.pyc": [
+   "47eab5d206ee91b6db9e91afc9303ef1"
+  ],
+  "Systems/Riha/__init__.pyc": [
+   "4074c02050c04da2392594cf274cb57d"
+  ],
+  "Systems/Savoy/Savoy.pyc": [
+   "184cbddf8f6242c3d555bc92b9a2f491"
+  ],
+  "Systems/Savoy/Savoy1.pyc": [
+   "87188826f1533496d721eab07429711a"
+  ],
+  "Systems/Savoy/Savoy1_S.pyc": [
+   "2f630ca37569e87a0a7ce01a0dae58c0"
+  ],
+  "Systems/Savoy/Savoy2.pyc": [
+   "9c3f9fa8eae24209e46dd60f6815ab06"
+  ],
+  "Systems/Savoy/Savoy2_S.pyc": [
+   "da7d3e474524726dedc140b7b62c70d9"
+  ],
+  "Systems/Savoy/Savoy3.pyc": [
+   "f731048f5766b5dbf9b7862accbd61d6"
+  ],
+  "Systems/Savoy/Savoy3_S.pyc": [
+   "0e65dbfbcb129c1e18c1accd2fefa761"
+  ],
+  "Systems/Savoy/__init__.pyc": [
+   "3954bd118f0bc37ce23905dddae2ea6e"
+  ],
+  "Systems/Serris/Serris.pyc": [
+   "3ba55316cda672298b5a3c99b2aaa0b5"
+  ],
+  "Systems/Serris/Serris1.pyc": [
+   "6f21754506dd5165b4b04be00480b76c"
+  ],
+  "Systems/Serris/Serris1_S.pyc": [
+   "dd3b170ccf85c38f55aaaece80989029"
+  ],
+  "Systems/Serris/Serris2.pyc": [
+   "e01d6e2708a1d50857386b633706fb31"
+  ],
+  "Systems/Serris/Serris2_S.pyc": [
+   "b497731b631aeaa3f149e1fa2785de3e"
+  ],
+  "Systems/Serris/Serris3.pyc": [
+   "c7100716e8c22f0abcac698e70be2111"
+  ],
+  "Systems/Serris/Serris3_S.pyc": [
+   "af00d2030699d14599ce8e5da1c9f498"
+  ],
+  "Systems/Serris/__init__.pyc": [
+   "4487e63e2eea5e06a5334782333a4c05"
+  ],
+  "Systems/Starbase12/Starbase.pyc": [
+   "ebcedac0dd1025b2fa2aea1c1bf85392"
+  ],
+  "Systems/Starbase12/Starbase12.pyc": [
+   "5f8f71ffeb6c4a639bc1485b9d49996c"
+  ],
+  "Systems/Starbase12/Starbase12_S.pyc": [
+   "b4d160186c0cd475d2f36288b290672f"
+  ],
+  "Systems/Starbase12/__init__.pyc": [
+   "642704c1b537d460cb3eac5c1cd359ff"
+  ],
+  "Systems/Tevron/Tevron.pyc": [
+   "f7c83eb0ea94b7b7c53ab5a247d9f3a6"
+  ],
+  "Systems/Tevron/Tevron1.pyc": [
+   "bd076a2684b1d5c2186b822226e8c188"
+  ],
+  "Systems/Tevron/Tevron1_S.pyc": [
+   "8d391d2e97e29af36bd4d3815b80f243"
+  ],
+  "Systems/Tevron/Tevron2.pyc": [
+   "b2837cafcec65008b4f8efff04be1a3e"
+  ],
+  "Systems/Tevron/Tevron2_S.pyc": [
+   "746e1f99418b1724d5cb407c4c595ea6"
+  ],
+  "Systems/Tevron/__init__.pyc": [
+   "93bd7e6d1365795e62d9f01eed244395"
+  ],
+  "Systems/Tezle/Tezle.pyc": [
+   "32b9d4dd538bb0caec32bb244ac47df0"
+  ],
+  "Systems/Tezle/Tezle1.pyc": [
+   "db65b145a52057b1d96f5899fac80f26"
+  ],
+  "Systems/Tezle/Tezle1_S.pyc": [
+   "4c748ae82956d9d86f37d3eb030a7cc7"
+  ],
+  "Systems/Tezle/Tezle2.pyc": [
+   "2256b857dacbe6922bd049ae68d72121"
+  ],
+  "Systems/Tezle/Tezle2_S.pyc": [
+   "d19e3577e654c319ac30876c6148e3fb"
+  ],
+  "Systems/Tezle/__init__.pyc": [
+   "b9cb4aa6f10c1219f4ee83ac6abb3b4a"
+  ],
+  "Systems/Utils.pyc": [
+   "8438b16bfd23c62e7643507297d8538b"
+  ],
+  "Systems/Vesuvi/Vesuvi.pyc": [
+   "896ea029eac041daf6f5c260bd56d4d2"
+  ],
+  "Systems/Vesuvi/Vesuvi1.pyc": [
+   "8c9010798e956fa83e53213e38fb6b7c"
+  ],
+  "Systems/Vesuvi/Vesuvi4.pyc": [
+   "f5381ba57325031d4b03a637d380dc9a"
+  ],
+  "Systems/Vesuvi/Vesuvi4_S.pyc": [
+   "865413c45786e74350b5b60cf95ab3a0"
+  ],
+  "Systems/Vesuvi/Vesuvi5.pyc": [
+   "5d2963211a39da658f0432eecb29b19c"
+  ],
+  "Systems/Vesuvi/Vesuvi5_S.pyc": [
+   "af597ae78fe3f897f5b509299867df95"
+  ],
+  "Systems/Vesuvi/Vesuvi6.pyc": [
+   "c932b8069cc3758915f87874ff1ba9b4"
+  ],
+  "Systems/Vesuvi/Vesuvi6_S.pyc": [
+   "bf81b3c307ac0f75820e47ba52b333b2"
+  ],
+  "Systems/Vesuvi/__init__.pyc": [
+   "ccc6fc85f590aebfbcecbbbbbc175cc5"
+  ],
+  "Systems/Voltair/Voltair.pyc": [
+   "cdb8502a7c911eea8df14a961cffbcdb"
+  ],
+  "Systems/Voltair/Voltair1.pyc": [
+   "0b3d675e574161cef7dcc7d7cee92b54"
+  ],
+  "Systems/Voltair/Voltair1_S.pyc": [
+   "2ee582aec71f20bf997b2e36a5f571a9"
+  ],
+  "Systems/Voltair/Voltair2.pyc": [
+   "5de408b36e3e1f88f9433cb213d47057"
+  ],
+  "Systems/Voltair/Voltair2_S.pyc": [
+   "ea3abf8efff1c96c263f636b245445e6"
+  ],
+  "Systems/Voltair/__init__.pyc": [
+   "365bf5aae0193c9846d9fa4fdc74a3eb"
+  ],
+  "Systems/XiEntrades/XiEntrades.pyc": [
+   "a2fecec3f9e8aefacdb0cb0f35bb4e4b"
+  ],
+  "Systems/XiEntrades/XiEntrades1.pyc": [
+   "dfec62b3a10cd2262dc93999bdd9d922"
+  ],
+  "Systems/XiEntrades/XiEntrades1_S.pyc": [
+   "963ceac92c505fae913f0bf1a6d55dd4"
+  ],
+  "Systems/XiEntrades/XiEntrades2.pyc": [
+   "81151bad0b8ec2c803059fdbc933a581"
+  ],
+  "Systems/XiEntrades/XiEntrades2_S.pyc": [
+   "187bf140c92f73d40dddc47e0a02b6a2"
+  ],
+  "Systems/XiEntrades/XiEntrades3.pyc": [
+   "2aff8ad74208a09d87072b0c5cdc2eee"
+  ],
+  "Systems/XiEntrades/XiEntrades3_S.pyc": [
+   "63f4349ae2bf453ad26a108fb4e89208"
+  ],
+  "Systems/XiEntrades/XiEntrades4.pyc": [
+   "bbfccfff48342053ec53bcac7a58180c"
+  ],
+  "Systems/XiEntrades/XiEntrades4_S.pyc": [
+   "4d09aafb9258ad3440627df910ac39b9"
+  ],
+  "Systems/XiEntrades/XiEntrades5.pyc": [
+   "6c8552850e10a8d64242614140d15eb4"
+  ],
+  "Systems/XiEntrades/XiEntrades5_S.pyc": [
+   "0f21c3feca69f3abcb6611a10b9aa06b"
+  ],
+  "Systems/XiEntrades/__init__.pyc": [
+   "79c16b5fbb2e04787aa9c58266d4bd73"
+  ],
+  "Systems/Yiles/Yiles.pyc": [
+   "ea5ce46ad4d05b303604b156ff57913b"
+  ],
+  "Systems/Yiles/Yiles1.pyc": [
+   "efefc2c4423584e095ffc0d2cfb24f48"
+  ],
+  "Systems/Yiles/Yiles1_S.pyc": [
+   "96350b3f90074d1eba80eb4bb92b2121"
+  ],
+  "Systems/Yiles/Yiles2.pyc": [
+   "29da5d0199716423c09210299210ba1a"
+  ],
+  "Systems/Yiles/Yiles2_S.pyc": [
+   "37b9fa13ca99e508dd7c8c56149d065f"
+  ],
+  "Systems/Yiles/Yiles3.pyc": [
+   "8ad0354c388c52ada1aeb0a5ece433b4"
+  ],
+  "Systems/Yiles/Yiles3_S.pyc": [
+   "03f50f2c4ea48d025aec6f4fbee470b8"
+  ],
+  "Systems/Yiles/Yiles4.pyc": [
+   "40248b46e90c0ee95fb8a9b123d87e9a"
+  ],
+  "Systems/Yiles/Yiles4_S.pyc": [
+   "9d114a915ce2fe6128b54d0bff46a3ce"
+  ],
+  "Systems/Yiles/__init__.pyc": [
+   "fbeb665a8416d6c25d285357939e62e5"
+  ],
+  "Systems/__init__.pyc": [
+   "e6d135891cd90fd1b35f1c573a124a08"
+  ],
+  "Tactical/EffectTextures.pyc": [
+   "3e7d18e146c98c7d37b9d941fe122192"
+  ],
+  "Tactical/Interface/DamageDisplay.pyc": [
+   "c4dad50baa262877f1c3e611a35dbd30"
+  ],
+  "Tactical/Interface/RadarDisplay.pyc": [
+   "e99ec3e935f4a2dc32963053de6a74c4"
+  ],
+  "Tactical/Interface/RadarScope.pyc": [
+   "03cda22bc01f2099c40237bde2ea0b41"
+  ],
+  "Tactical/Interface/ShieldsDisplay.pyc": [
+   "5728fd01ca352a87dfc309065f68e5fb"
+  ],
+  "Tactical/Interface/ShipDisplay.pyc": [
+   "938f8bcc60bef2a63a6499daacb82e5e"
+  ],
+  "Tactical/Interface/TacticalControlWindow.pyc": [
+   "6fbf0df200482ac5fe68a2bb38620721"
+  ],
+  "Tactical/Interface/WeaponsDisplay.pyc": [
+   "195b58ca97a398a4ec3e7443d562e9eb"
+  ],
+  "Tactical/Interface/__init__.pyc": [
+   "7066c4337557504890fd48812b314df7"
+  ],
+  "Tactical/LensFlares.pyc": [
+   "6d9bc128e0faf068e0b6bec91444c24d"
+  ],
+  "Tactical/Projectiles/AntimatterTorpedo.pyc": [
+   "4b84ff748a3ba147ab01ba5d2d07e4d9"
+  ],
+  "Tactical/Projectiles/CardassianDisruptor.pyc": [
+   "9b636e0f1899044fbfa3f8d6f946ef53"
+  ],
+  "Tactical/Projectiles/CardassianTorpedo.pyc": [
+   "c851efd88a570ac7dc462cb3a0bd15ef"
+  ],
+  "Tactical/Projectiles/Disruptor.pyc": [
+   "5cfe1fa5d3fd9d0760e40b478c9ba0d6"
+  ],
+  "Tactical/Projectiles/FusionBolt.pyc": [
+   "6767dbf59887424390d0f89f63264426"
+  ],
+  "Tactical/Projectiles/KessokDisruptor.pyc": [
+   "23caa305f88f573834a070b9cb2c0f33"
+  ],
+  "Tactical/Projectiles/KlingonTorpedo.pyc": [
+   "fcb2836b72753f33dc37f2e9d5a29583"
+  ],
+  "Tactical/Projectiles/PhasedPlasma.pyc": [
+   "054e4458bc200bf4bed8c7e57342b055"
+  ],
+  "Tactical/Projectiles/PhotonTorpedo.pyc": [
+   "582d46a3a7b947255ee70734dfce32a3"
+  ],
+  "Tactical/Projectiles/PhotonTorpedo2.pyc": [
+   "98396dfa79d95b07004b7d46a512c9a4"
+  ],
+  "Tactical/Projectiles/PositronTorpedo.pyc": [
+   "37fe02e97754d885ea61d1f974797fa6"
+  ],
+  "Tactical/Projectiles/PositronTorpedo2.pyc": [
+   "96730ab965cc80208901239e6fa83b1a"
+  ],
+  "Tactical/Projectiles/PulseDisruptor.pyc": [
+   "30edbc5249dcd943cbaeb74bfe9c92d4"
+  ],
+  "Tactical/Projectiles/QuantumTorpedo.pyc": [
+   "1cd1c5c4c97f7b05d975482d3551e898"
+  ],
+  "Tactical/Projectiles/RomulanCannon.pyc": [
+   "0845c74b0f57b46e3e9bc3e22467fdac"
+  ],
+  "Tactical/Projectiles/__init__.pyc": [
+   "19bb8708063c492ba26e4bf90b8ae165"
+  ],
+  "Tactical/ReticleTextures.pyc": [
+   "1aff4ec0aa8453fa8f66fa0e1482d46b"
+  ],
+  "Tactical/Tactical.pyc": [
+   "83c75c1b777703752b7049c7c9f7d213"
+  ],
+  "Tactical/TacticalIcons.pyc": [
+   "003dbb20d6ffeeda20a99caf9284b077"
+  ],
+  "Tactical/__init__.pyc": [
+   "b7e0e403f6d7ae2222947bbb529a04d1"
+  ],
+  "TacticalControlHandlers.pyc": [
+   "d9b8fc13c8b728f6e0eb32593d09daa3"
+  ],
+  "TacticalInterfaceHandlers.pyc": [
+   "31853b2c5c60a400255188c446980562"
+  ],
+  "TimingGraph.pyc": [
+   "3d23e1538dcf9f314ea7abf489cd9e45"
+  ],
+  "TopWindow.pyc": [
+   "14450a37f70b3dbd8ebc29896f0ecdfc"
+  ],
+  "UIHelpers.pyc": [
+   "80aa1d415e649140c35790c4d698afa6"
+  ],
+  "UITheme.pyc": [
+   "75964ed943da28734dc62d7223cc655e"
+  ],
+  "UITree.pyc": [
+   "5db4da5b8416ba18da1a3cc1abfe3621"
+  ],
+  "WarpSequence.pyc": [
+   "9290086f8b356c1092694b5c348f722b"
+  ],
+  "copy_reg.pyc": [
+   "87cb69a1b4cc249536d3d06ee52e6741"
+  ],
+  "loadspacehelper.pyc": [
+   "4c813ece9c2afbad15c067f7806d5f16"
+  ],
+  "loadsplash.pyc": [
+   "38ac7690807f1bc2768de286601302a9"
+  ],
+  "ships/Akira.pyc": [
+   "7bd3358bef4f4194c54a84f60d4b19ff"
+  ],
+  "ships/Amagon.pyc": [
+   "bed69ae701d74ca20555a111a59642a5"
+  ],
+  "ships/Ambassador.pyc": [
+   "34a0af40f6cb5649ec12168b4c5cb41f"
+  ],
+  "ships/Asteroid.pyc": [
+   "5c2dbb0d224439fff069a4067abb42d9"
+  ],
+  "ships/Asteroid1.pyc": [
+   "445aadebc92b85c47e6df73dcabe9b3e"
+  ],
+  "ships/Asteroid2.pyc": [
+   "c379237915a9af6056f24ce780b4f797"
+  ],
+  "ships/Asteroid3.pyc": [
+   "59af609520683c62ac3589a0e9e83e74"
+  ],
+  "ships/Asteroidh1.pyc": [
+   "8a87c575ce5842db9c607334e1a04892"
+  ],
+  "ships/Asteroidh2.pyc": [
+   "cb6583ad98abd4ef68d63eda1fe3bb9d"
+  ],
+  "ships/Asteroidh3.pyc": [
+   "270c0973193fe9ca6eede45a8b3a8696"
+  ],
+  "ships/BiranuStation.pyc": [
+   "7c97661449aff11d2c34cfc81f66da15"
+  ],
+  "ships/BirdOfPrey.pyc": [
+   "c8540229e05e02f225674b66e8201f2f"
+  ],
+  "ships/BombFreighter.pyc": [
+   "83cc5f01f84151626a55d67e6da2029e"
+  ],
+  "ships/CardFacility.pyc": [
+   "81194be71d0edf293f8753ecedfe1e75"
+  ],
+  "ships/CardFreighter.pyc": [
+   "4628ab867bc5f0ed6fee3d3aa721ad79"
+  ],
+  "ships/CardHybrid.pyc": [
+   "7d41a3f69477bfdb3bfcf8a1e538c180"
+  ],
+  "ships/CardOutpost.pyc": [
+   "542119aaff08b37d5613ddf4781dc7b0"
+  ],
+  "ships/CardStarbase.pyc": [
+   "3f7087308a9e34079325b8d1c265de8f"
+  ],
+  "ships/CardStation.pyc": [
+   "6ac9497f32434a061e6de0db0610f34f"
+  ],
+  "ships/CommArray.pyc": [
+   "f61368bc49b8e2ba5a0fd5c29cd16c8a"
+  ],
+  "ships/CommLight.pyc": [
+   "aafde5209542beea66c34d8dc84081b3"
+  ],
+  "ships/Decoy.pyc": [
+   "abf39dcb87eaad03e32552559509ce75"
+  ],
+  "ships/DryDock.pyc": [
+   "aa0710552c18a7e254afe8cefee4583f"
+  ],
+  "ships/E2M0Warbird.pyc": [
+   "613f40ee207627f0c6017ef77caf93ec"
+  ],
+  "ships/Enterprise.pyc": [
+   "7cc9febe64a93366fc5e6330e83724ca"
+  ],
+  "ships/EscapePod.pyc": [
+   "ba09ac97e092c954d154a1ac08be3ccb"
+  ],
+  "ships/FedOutpost.pyc": [
+   "af7f14cb1ef9c19c4d7061fbdc1d9759"
+  ],
+  "ships/FedStarbase.pyc": [
+   "ffbfff7691a0ddf9b9372ef9f730774c"
+  ],
+  "ships/Freighter.pyc": [
+   "edd1efdaf839cbde33a187d8c284667e"
+  ],
+  "ships/Galaxy.pyc": [
+   "0c24080beb5d5bcd12f38763623cac74"
+  ],
+  "ships/Galor.pyc": [
+   "4cfe6f44bf5ed67596f5323b615b5133"
+  ],
+  "ships/GenericTemplate.pyc": [
+   "f413b9f6d4234bb065f10adef52b6cf1"
+  ],
+  "ships/Geronimo.pyc": [
+   "b53eda053fa6a294db9bd049f27acdfb"
+  ],
+  "ships/Hardpoints/GenericTemplate.pyc": [
+   "6872f9b986cfd53667ba204df5819fd9"
+  ],
+  "ships/Hardpoints/__init__.pyc": [
+   "f90601eb35d43829f44f06698cf3e1b6"
+  ],
+  "ships/Hardpoints/akira.pyc": [
+   "836f7a7a80bddf53a7b7586bd33f5c34"
+  ],
+  "ships/Hardpoints/amagon.pyc": [
+   "20c2a1e631992f5f8e4898cd7bf1ada7"
+  ],
+  "ships/Hardpoints/ambassador.pyc": [
+   "6417198dcd9c36e4d5bc94829dc42967"
+  ],
+  "ships/Hardpoints/asteroid.pyc": [
+   "92856df686297edcce2f111bedddbfd0"
+  ],
+  "ships/Hardpoints/asteroid1.pyc": [
+   "829e27f2f3becbd7949e004c380410e3"
+  ],
+  "ships/Hardpoints/asteroid2.pyc": [
+   "164e53fb5ba0c30298ad97db3f1a7ede"
+  ],
+  "ships/Hardpoints/asteroid3.pyc": [
+   "db764c20b373b6b49530441b599bc02b"
+  ],
+  "ships/Hardpoints/asteroidh1.pyc": [
+   "6a81fb47df63c73731d759945cc4f3e9"
+  ],
+  "ships/Hardpoints/asteroidh2.pyc": [
+   "4b00570ded3a3e6e3808844bb3449fc8"
+  ],
+  "ships/Hardpoints/asteroidh3.pyc": [
+   "2a5a7beba487ae8db2e87700bbcad348"
+  ],
+  "ships/Hardpoints/biranustation.pyc": [
+   "b08b9708e5012a9fd8c7712fa0d8877e"
+  ],
+  "ships/Hardpoints/birdofprey.pyc": [
+   "bafd88b725434911adb051ca6a40e872"
+  ],
+  "ships/Hardpoints/bombfreighter.pyc": [
+   "9b38bca58cbe7668bd3ef4814d0a0b1e"
+  ],
+  "ships/Hardpoints/cardfacility.pyc": [
+   "5b23e969803b1d939b834bc72d0b48fd"
+  ],
+  "ships/Hardpoints/cardfreighter.pyc": [
+   "e0da03410e37fbb78419999754cb534f"
+  ],
+  "ships/Hardpoints/cardhybrid.pyc": [
+   "787cc2772a6e70beda20255778165c3c"
+  ],
+  "ships/Hardpoints/cardoutpost.pyc": [
+   "797168cdd7284fd69210b16216700fff"
+  ],
+  "ships/Hardpoints/cardstarbase.pyc": [
+   "18f837bdf7b9306e33ac35a16c284672"
+  ],
+  "ships/Hardpoints/cardstation.pyc": [
+   "d117cb610ab9c7804e0a36c4c11cd7ba"
+  ],
+  "ships/Hardpoints/commarray.pyc": [
+   "506105f267d32e0c8cc80f6ace9c7886"
+  ],
+  "ships/Hardpoints/commlight.pyc": [
+   "f142013d05e14003facf1e4970dd84c4"
+  ],
+  "ships/Hardpoints/drydock.pyc": [
+   "cc079be4dbf6915d01192a742207f937"
+  ],
+  "ships/Hardpoints/e2m0warbird.pyc": [
+   "47999ae13f8d48fe699d8656ce6976e1"
+  ],
+  "ships/Hardpoints/enterprise.pyc": [
+   "a081d55c0817400f94a422aac1328d49"
+  ],
+  "ships/Hardpoints/escapepod.pyc": [
+   "30f27d2f56e2de2eba94b8b8153a4b90"
+  ],
+  "ships/Hardpoints/fedoutpost.pyc": [
+   "57d54835d18bcbac6928e6367d5e246c"
+  ],
+  "ships/Hardpoints/fedstarbase.pyc": [
+   "9cd87a6a875bf4d2bbf9f72ef9647a35"
+  ],
+  "ships/Hardpoints/freighter.pyc": [
+   "e1830767532a48c421a450804d4cfb41"
+  ],
+  "ships/Hardpoints/galaxy.pyc": [
+   "bd6d78178f8d8d7a6519550070b76b50"
+  ],
+  "ships/Hardpoints/galor.pyc": [
+   "0a7bac11e2bd54b4c56e785c54339f88"
+  ],
+  "ships/Hardpoints/geronimo.pyc": [
+   "af0fb35c656be7917e6b7a6dcc742a68"
+  ],
+  "ships/Hardpoints/keldon.pyc": [
+   "0f8e4dd07256eb5e498911e15e707683"
+  ],
+  "ships/Hardpoints/kessokheavy.pyc": [
+   "871ce7b65f73948ff195e767b7ac7a4c"
+  ],
+  "ships/Hardpoints/kessoklight.pyc": [
+   "229e5a57bba876691882704036245492"
+  ],
+  "ships/Hardpoints/kessokmine.pyc": [
+   "f70615f58ed6b4b4e46cc1f6eb926fb1"
+  ],
+  "ships/Hardpoints/marauder.pyc": [
+   "e8ec4dcbcc7a4d44eb8e776267c794a3"
+  ],
+  "ships/Hardpoints/matankeldon.pyc": [
+   "fa7a5dac7c130179e81662f56004fdea"
+  ],
+  "ships/Hardpoints/nebula.pyc": [
+   "1f86256437d8a3e0045e913d5aac6dec"
+  ],
+  "ships/Hardpoints/peregrine.pyc": [
+   "26bca59531acb3ff00cfffe5aaacaa76"
+  ],
+  "ships/Hardpoints/probe.pyc": [
+   "09f5019ac349f433eeb2ad6aad425e0c"
+  ],
+  "ships/Hardpoints/probe2.pyc": [
+   "cfd221277b5774349739d426f3450993"
+  ],
+  "ships/Hardpoints/rankuf.pyc": [
+   "230504b716d77dc1611da70856b3780f"
+  ],
+  "ships/Hardpoints/shuttle.pyc": [
+   "2dcb12986491bf376273ef03947d7581"
+  ],
+  "ships/Hardpoints/sovereign.pyc": [
+   "242ac4d8c133e0b24dae737d367f69c2"
+  ],
+  "ships/Hardpoints/spacefacility.pyc": [
+   "aeab1af57d90ded1339196ddc7f2d381"
+  ],
+  "ships/Hardpoints/sunbuster.pyc": [
+   "3f7675cd3ff964d9d5a7e8de3f9a3dce"
+  ],
+  "ships/Hardpoints/transport.pyc": [
+   "631cde036c79c068e869597dba1e1b74"
+  ],
+  "ships/Hardpoints/vorcha.pyc": [
+   "8aaa103d36f57da9a5e51e2eaa2a6cd5"
+  ],
+  "ships/Hardpoints/warbird.pyc": [
+   "a1f99c227da6f42212ba36a219523c1d"
+  ],
+  "ships/Keldon.pyc": [
+   "9e9961fd54e611b1fadc086d0287159b"
+  ],
+  "ships/KessokHeavy.pyc": [
+   "cf22ed263ccf566e4d473b4aadca7946"
+  ],
+  "ships/KessokLight.pyc": [
+   "987b0f1b2d52cd3682f9d7723d8347d9"
+  ],
+  "ships/KessokMine.pyc": [
+   "56ce085abbe06c08745c7f357da990eb"
+  ],
+  "ships/Marauder.pyc": [
+   "e7bc757a18c6efa6021156dd620b4e25"
+  ],
+  "ships/MatanKeldon.pyc": [
+   "bd15d795fedc47daa4b767524fdd463b"
+  ],
+  "ships/Nebula.pyc": [
+   "23be78a9604a1ef02c3bae79ba0707a6"
+  ],
+  "ships/Peregrine.pyc": [
+   "d8bd1cb33ca2330eada93b23a49e3bdc"
+  ],
+  "ships/Probe.pyc": [
+   "d585cbf028d83340c115e70ef8fa9562"
+  ],
+  "ships/RanKuf.pyc": [
+   "c32fe0eb08b9066d5d6c0bfe501ca1c3"
+  ],
+  "ships/Shuttle.pyc": [
+   "608711f79c6cf26e78534b1271944a03"
+  ],
+  "ships/Sovereign.pyc": [
+   "12d897b009baa0ebde0cb1dc544a5b8d"
+  ],
+  "ships/SpaceFacility.pyc": [
+   "7fa20a8475455d75d289a6efe2588640"
+  ],
+  "ships/Sunbuster.pyc": [
+   "8ff35b6819bde1fd1513a52edfe39a5d"
+  ],
+  "ships/Transport.pyc": [
+   "9f4abf25b5d5de19593a5e163975cc09"
+  ],
+  "ships/Vorcha.pyc": [
+   "8c16b34a4cae5be2154cd918442f6ac5"
+  ],
+  "ships/Warbird.pyc": [
+   "3af7bcc8e79e3606f5f17b60378dee58"
+  ],
+  "ships/__init__.pyc": [
+   "51c4dd8444f946fcf281585a6aef2b0b"
+  ],
+  "string.pyc": [
+   "dc2f46439b356d38c54e13edc4a4e337"
+  ]
+ }
+}
