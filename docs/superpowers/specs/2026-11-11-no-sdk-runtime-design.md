@@ -41,9 +41,11 @@ Measured on Mark's install (2026-11-11):
    game flag): `DAUNTLESS_SDK_DIR`, then `settings.json` `[paths].sdk`, then
    an in-project `sdk/`. One accessor, used only by tests and `tools/`. A guard
    test fails if the shipped game calls it.
-5. **No SDK on the machine:** the tests that genuinely need it skip with a
-   clear reason, as content-backed tests do with no game folder. Contributors
-   and CI without an SDK get a working suite.
+5. **The SDK is required to work on the codebase**, as a game install is.
+   Tests may require it; they do not need a no-SDK skip path. Where the
+   test machinery already treats BC content as absent (the content-free
+   GitHub CI), SDK-backed tests follow the same existing mechanism as
+   game-content tests; no new SDK-specific skip logic is built.
 6. **Dirty installs: known list, warn.** Only modules on a committed list of
    the 1,201 stock relative paths load from the game's `scripts/` folder. Stray
    `.py` files and unknown `.pyc` there are ignored: mods go through the Mods
@@ -58,8 +60,8 @@ Measured on Mark's install (2026-11-11):
 8. **The SDK's sample tutorial (`Custom/Tutorial`) stays a TEST fixture.**
    17 test files run its missions (M1Basic, M2Objects, M3Gameflow) as scenes,
    and retail BC does not ship them. The TEST loader alone may load that
-   sample, and its TGL, from the SDK through the dev chain (decision 4); those
-   tests skip with no SDK. Every real stock module still comes lifted from the
+   sample, and its TGL, from the SDK through the dev chain (decision 4; the
+   SDK is a development requirement, decision 5). Every real stock module still comes lifted from the
    install, in tests too. The game never sees the sample: the dev mission
    picker loses its "Tutorial" family.
 
@@ -230,9 +232,10 @@ notice's pinned wording is untouched.
 ### 4.6 Developers: the dev SDK accessor
 
 - Lives outside `engine/` (e.g. `tools/dev_sdk.py`; builder's call on the
-  name): returns the SDK root or `None` via decision 4's chain, plus a
-  pytest helper/marker that skips with "no BC SDK configured
-  (DAUNTLESS_SDK_DIR or settings.json [paths].sdk)".
+  name): returns the SDK root via decision 4's chain, and raises a clear
+  error naming the chain ("no BC SDK configured: set DAUNTLESS_SDK_DIR or
+  settings.json [paths].sdk; the SDK is required for development") when none
+  resolves.
 - **Guard test**: nothing under `engine/`, no file the package ships
   (`scripts/package.py`'s list, which includes `tools/mission_harness.py`),
   and neither SDK finder twin's runtime path imports or calls it. Parse,
@@ -251,12 +254,11 @@ sorted into:
 - **Using the SDK's sample tutorial** (decision 8; 17 files, e.g.
   `test_gameloop_harness.py`, `test_frame_rate_independence.py`,
   `tests/integration/tutorial/`, `tests/missions/conftest.py`'s tutorial TGL,
-  `test_host_loop_unit.py` pinning `host_loop.SHIP_GATE_MISSION`): unchanged
-  apart from a skip when no SDK is configured. `engine/missions/discovery.py`
+  `test_host_loop_unit.py` pinning `host_loop.SHIP_GATE_MISSION`): unchanged;
+  the test loader serves the sample from the SDK. `engine/missions/discovery.py`
   keeps "Custom/Tutorial" in its family table (harmless when absent);
   `SHIP_GATE_MISSION` stays, as tests are its only callers (builder checks).
-- **About the SDK itself**: keep the SDK through the dev accessor and skip
-  without it. At least the stock oracle (`test_py15_stock_oracle.py`), the
+- **About the SDK itself**: keep the SDK through the dev accessor. At least the stock oracle (`test_py15_stock_oracle.py`), the
   constants generator (`tools/gen_app_constants.py` reads SDK `App.py`), and
   `tools/setup.py` (instrumentation installs into the real game from SDK
   `App.py`).
