@@ -397,10 +397,15 @@ def test_the_feed_counts_native_frames_and_skips(beam_scene, monkeypatch):
     assert ok is True
     assert want[0], "premise: phasers draw"
     want = tuple(want)
-    # A ship with no row: skipped in each walk, every other pair drawn.
+    # A ship with no row: skipped in each walk, every other pair drawn. As
+    # a blocker candidate it needs Python, so every drawn phaser pair keeps
+    # its target's end, counted "blocker" (beam_feed.h, BeamSkip): the pairs
+    # are those of the call before, which had no row-less candidate -- so
+    # this frame equals it only while nothing blocked there either.
     ok, phasers, tractors = _native_feed(
         bs.ships + [types.SimpleNamespace()], bs.ship_instances)
     assert ok and (phasers, tractors) == want
+    pairs = len(want[0]) // 2
     # A plain dict, not the session's TrackedInstances: native, the same.
     ok, phasers, tractors = _native_feed(
         bs.ships, dict(bs.ship_instances.items()))
@@ -413,7 +418,7 @@ def test_the_feed_counts_native_frames_and_skips(beam_scene, monkeypatch):
     ok, phasers, tractors = _native_feed(bs.ships, bs.ship_instances)
     assert ok and (phasers, tractors) == want
     assert nc.beam_feed_counts() == {
-        "native": 5, "skips": dict(zero, ship_row=2)}
+        "native": 5, "skips": dict(zero, ship_row=2, blocker=pairs)}
     nc.reset()
     assert nc.beam_feed_counts() == {"native": 0, "skips": zero}
 
@@ -498,6 +503,97 @@ def test_beam_scene_matches_the_golden(beam_scene):
     assert nc.beam_feed_counts()["native"] == 300
     assert not any(nc.beam_feed_counts()["skips"].values())
     _record_or_check("beam_scene", frames)
+
+
+def _python_drawn_ends(ships, ship_instances):
+    """Each firing phaser bank's end as the damage step's Python reference
+    picks its contact (host_loop._phaser_step_bank, beam_blockers): the
+    target's bubble entry or hull point, unless beam_blockers.first_blocker
+    finds something nearer -- then its bubble entry, else its point. In the
+    feed's order (ship, firing bank), RENDER space; and how many were
+    blocked, by tier. Every ship in one set (the scene's premise)."""
+    from engine import host_loop
+    from engine.appc import beam_blockers, combat
+    from engine.appc.math import TGPoint3
+    from engine.systems import frames
+    view = frames.viewing_set()
+    ends, tiers = [], {}
+    for ship in ships:
+        sys_ = ship.GetPhaserSystem()
+        if sys_ is None:
+            continue
+        for bank in _firing(sys_):
+            target = bank._target
+            if target is None:
+                continue
+            assert frames.containing_set(target) is \
+                frames.containing_set(ship), "premise: one set"
+            target_pos, _sub = host_loop._phaser_aim_point(ship, target)
+            emitter = bank._strip_emit_position(target_pos)
+            dx = target_pos.x - emitter.x
+            dy = target_pos.y - emitter.y
+            dz = target_pos.z - emitter.z
+            dist = (dx * dx + dy * dy + dz * dz) ** 0.5
+            assert dist > 1e-6
+            aim = TGPoint3(dx / dist, dy / dist, dz / dist)
+            impact, _n = combat._resolve_hit_point(
+                ship_instances=ship_instances, ship=target,
+                ray_origin=emitter, ray_direction=aim, max_dist=dist * 1.5,
+                fallback_point=target_pos)
+            bubble = (combat.shield_bubble_entry(target, emitter, aim,
+                                                 dist * 1.5)
+                      if combat.shields_block(target) else None)
+            b = beam_blockers.first_blocker(
+                ship, target, emitter, aim,
+                beam_blockers.contact_distance(emitter, impact, bubble),
+                ships, {}, ship_instances)
+            if b is None:
+                end = bubble if bubble is not None else impact
+            else:
+                end = b.bubble if b.bubble is not None else b.point
+                tiers[b.tier] = tiers.get(b.tier, 0) + 1
+            ends.append(frames.to_render(view, frames.containing_set(target),
+                                         end.x, end.y, end.z))
+    return ends, tiers
+
+
+def test_drawn_phaser_ends_where_the_damage_step_lands(beam_scene):
+    """Spec 2026-11-11-beam-blocking §7 case 11, on REAL hull meshes: every
+    frame of the golden scene, each drawn phaser pair (outer and inner) ends
+    where the Python reference puts the damage contact, the blocker's when
+    a ship is in the way."""
+    from engine.appc.ship_iter import iter_ships
+    from tests.host.test_native_k2_differential import OPS
+    bs = beam_scene
+    sc = bs.scene
+    start = sc.tick
+    manual = random.Random(MANUAL_SEED)
+    blocked = {}
+    checked = [0]
+
+    def frame(scene):
+        _manual_aim_beat(scene, scene.tick - start, manual)
+        ships = list(iter_ships())
+        ends, tiers = _python_drawn_ends(ships, bs.ship_instances)
+        assert nc.beam_feed(ships, bs.ship_instances) is True
+        drawn = [beam_dict(r) for r in _h.phaser_beams_debug()]
+        assert len(drawn) == 2 * len(ends)
+        for i, want in enumerate(ends):
+            for d in drawn[2 * i:2 * i + 2]:
+                assert d["target"] == pytest.approx(
+                    tuple(f32(c) for c in want), abs=1e-6), (
+                    scene.tick, i, d["target"], want)
+        checked[0] += len(ends)
+        for k, n in tiers.items():
+            blocked[k] = blocked.get(k, 0) + n
+
+    nc.reset_beam_feed_counts()
+    sc.run(OPS, 1, ticks=start + 300, before_tick=frame)
+    assert checked[0] > 0
+    # Seeded: blockers met at a shield bubble AND on a real hull mesh.
+    assert blocked.get("mesh", 0) > 0 and blocked.get("bubble", 0) > 0, \
+        blocked
+    assert not any(nc.beam_feed_counts()["skips"].values())
 
 
 def test_beam_regions_match_the_golden(native_combat_on, regions, far_scene):

@@ -90,6 +90,7 @@ struct World {
         store.set_position(i, g, x, y, z);
         const int64_t h = m.register_row(Kind::Object, i, g, next_id++);
         m.set_i(h, Field::is_ship_class, 1);
+        m.set_i(h, Field::has_real_is_dead, 1);
         m.set_i(h, Field::has_real_get_shields, 1);
         m.set_i(h, Field::has_cloak_getter, 1);
         m.set_ref(h, Field::_containing_set, in_set == -1 ? set : in_set);
@@ -602,14 +603,18 @@ TEST(BeamFeed, NoRowShipIsSkippedInEachList) {
     w.run({s.ship, -1});
     EXPECT_EQ(w.phasers.size(), 2u);
     EXPECT_EQ(w.skipped(BeamSkip::ShipRow), 2);  // the phaser and tractor walks
-    EXPECT_EQ(w.total_skipped(), 2);
+    // ...and, as a blocker candidate, the rowless ship needs Python: the
+    // drawn pair counts one "blocker" (and ends on its target).
+    EXPECT_EQ(w.skipped(BeamSkip::Blocker), 1);
+    EXPECT_EQ(w.phasers[0].target, (Vec3{0.0, 50.0, 0.0}));
+    EXPECT_EQ(w.total_skipped(), 3);
 }
 
 TEST(BeamFeed, SkipReasonsHaveNames) {
     const char* want[] = {"ship_row",   "not_ship_class", "target_row",
                           "containing_set", "frames",     "part_stale",
                           "mount_unknown",  "colour_unset", "shields",
-                          "geometry",   "error"};
+                          "geometry",   "error",          "blocker"};
     ASSERT_EQ(std::size(want), static_cast<size_t>(BeamSkip::kCount));
     for (size_t i = 0; i < std::size(want); ++i)
         EXPECT_STREQ(beam_skip_name(static_cast<BeamSkip>(i)), want[i]);
@@ -670,24 +675,27 @@ TEST(BeamFeed, NonShipTargetWithARealGetShieldsIsSkipped) {
 // (A, B, C) fire one bank each at T; only B is broken, so the frame is A's
 // and C's pairs exactly as drawn without the break, and the one reason is
 // counted. ("error" -- an exception that is not an invalid_argument -- has no
-// mirror state that raises it.)
+// mirror state that raises it.) Where B is broken AS A BLOCKER CANDIDATE too
+// (no row, not a ShipClass, an unnamed set: beam_block.h, NeedPython), A's
+// and C's banks each count one "blocker" and are still drawn, unblocked.
 TEST(BeamFeed, SkippedItemDropsOnlyItself) {
     struct Case {
         const char* name;
         BeamSkip why;
         int64_t count;
+        int64_t blocker;  // the other shooters' banks' blocker skips
     };
     const Case cases[] = {
-        {"ship_row", BeamSkip::ShipRow, 2},
-        {"not_ship_class", BeamSkip::NotShipClass, 2},
-        {"target_row", BeamSkip::TargetRow, 1},
-        {"containing_set", BeamSkip::ContainingSet, 1},
-        {"frames", BeamSkip::Frames, 1},
-        {"part_stale", BeamSkip::PartStale, 1},
-        {"mount_unknown", BeamSkip::MountUnknown, 1},
-        {"colour_unset", BeamSkip::ColourUnset, 1},
-        {"shields", BeamSkip::Shields, 1},
-        {"geometry", BeamSkip::Geometry, 1},
+        {"ship_row", BeamSkip::ShipRow, 2, 2},
+        {"not_ship_class", BeamSkip::NotShipClass, 2, 2},
+        {"target_row", BeamSkip::TargetRow, 1, 0},
+        {"containing_set", BeamSkip::ContainingSet, 1, 2},
+        {"frames", BeamSkip::Frames, 1, 0},
+        {"part_stale", BeamSkip::PartStale, 1, 0},
+        {"mount_unknown", BeamSkip::MountUnknown, 1, 0},
+        {"colour_unset", BeamSkip::ColourUnset, 1, 0},
+        {"shields", BeamSkip::Shields, 1, 0},
+        {"geometry", BeamSkip::Geometry, 1, 0},
     };
     for (const Case& c : cases) {
         SCOPED_TRACE(c.name);
@@ -761,6 +769,144 @@ TEST(BeamFeed, SkippedItemDropsOnlyItself) {
         w.run(ships);
         EXPECT_TRUE(same(w.phasers, want));
         EXPECT_EQ(w.skipped(c.why), c.count);
-        EXPECT_EQ(w.total_skipped(), c.count);
+        EXPECT_EQ(w.skipped(BeamSkip::Blocker), c.blocker);
+        EXPECT_EQ(w.total_skipped(), c.count + c.blocker);
     }
+}
+
+// ── THE BLOCKER: the drawn beam ends where the damage lands ─────────────────
+// beam_endpoint calls first_blocker (beam_block.h) with contact_dist = |the
+// endpoint it would have drawn - the emitter|, over the feed's ships in order
+// and ctx.planets; a ship blocks at its bubble entry (else its point), a
+// planet at its point. The scene's target has no shields and no instance,
+// so that endpoint is the aim point (0, 50, 0) and contact_dist is 50.
+
+namespace {
+
+void expect_ends_at(const World& w, const Vec3& want) {
+    ASSERT_EQ(w.phasers.size(), 2u);
+    for (const BeamOut& d : w.phasers) {
+        EXPECT_EQ(d.emitter, (Vec3{0.0, 0.0, 0.0}));
+        for (int k = 0; k < 3; ++k) EXPECT_NEAR(d.target[k], want[k], 1e-9) << k;
+    }
+}
+
+}  // namespace
+
+TEST(BeamFeed, EndsOnShieldedBlocker) {
+    World w;
+    const Scene s = scene(w);
+    const int64_t blocker = w.ship(0.0, 25.0, 0.0);
+    w.shields(blocker);
+    w.run({s.ship, blocker, s.target});
+    const auto entry = shield_bubble_entry(w.m, blocker, {0.0, 0.0, 0.0},
+                                           {0.0, 1.0, 0.0}, 50.0);
+    ASSERT_TRUE(entry.has_value());
+    ASSERT_LT((*entry)[1], 25.0);
+    expect_ends_at(w, *entry);
+    // The length is the blocked beam's.
+    EXPECT_EQ(w.phasers[0].u_tiles, py_max(1.0, (*entry)[1] * 0.1));
+    EXPECT_EQ(w.total_skipped(), 0);
+}
+
+TEST(BeamFeed, EndsOnPlanet) {
+    World w;
+    const Scene s = scene(w);
+    BeamPlanet p;
+    p.set = w.set;
+    p.centre = {0.0, 25.0, 0.0};
+    p.radius = 5.0;
+    w.ctx.planets.push_back(p);
+    w.run({s.ship, s.target});
+    const SphereEntry e = ray_sphere_entry({0.0, 0.0, 0.0}, {0.0, 1.0, 0.0},
+                                           50.0, {0.0, 25.0, 0.0}, 5.0);
+    ASSERT_EQ(e.kind, SphereEntry::Kind::Point);
+    expect_ends_at(w, e.point);
+    EXPECT_NEAR(e.point[1], 20.0, 1e-9);
+    EXPECT_EQ(w.total_skipped(), 0);
+}
+
+// A shielded blocker met at its bubble with a mesh hit behind it: the beam
+// still ends on the bubble (the facing stops it, as it does on a target).
+TEST(BeamFeed, BlockerMeshHitStillEndsOnItsBubble) {
+    World w;
+    const Scene s = scene(w);
+    const int64_t blocker = w.ship(0.0, 25.0, 0.0);
+    w.shields(blocker);
+    w.host.at = {0.0, 25.0, 0.0};
+    w.host.hit = TraceHit{{0.0f, -1.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 24.0f};
+    w.ctx.iids[blocker] = K2Context::Iid{false, {1, 1}};
+    w.run({s.ship, blocker, s.target});
+    const auto entry = shield_bubble_entry(w.m, blocker, {0.0, 0.0, 0.0},
+                                           {0.0, 1.0, 0.0}, 50.0);
+    ASSERT_TRUE(entry.has_value());
+    EXPECT_EQ(w.host.calls, 1);  // the blocker's mesh was traced
+    expect_ends_at(w, *entry);
+}
+
+// An unshielded blocker with a mesh hit: the beam ends on the hit.
+TEST(BeamFeed, EndsOnUnshieldedBlockerMeshHit) {
+    World w;
+    const Scene s = scene(w);
+    const int64_t blocker = w.ship(0.0, 25.0, 0.0);
+    w.host.at = {0.0, 25.0, 0.0};
+    w.host.hit = TraceHit{{0.0f, -2.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 23.0f};
+    w.ctx.iids[blocker] = K2Context::Iid{false, {1, 1}};
+    w.run({s.ship, blocker, s.target});
+    expect_ends_at(w, {0.0, 23.0, 0.0});
+    EXPECT_EQ(w.total_skipped(), 0);
+}
+
+// first_blocker needs Python (a candidate whose class overrides a mirrored
+// read): today's endpoint, the pair drawn, one "blocker" counted.
+TEST(BeamFeed, BlockerNeedingPythonKeepsTodaysEndpoint) {
+    World w;
+    const Scene s = scene(w);
+    const int64_t blocker = w.ship(0.0, 25.0, 0.0);
+    w.shields(blocker);
+    w.ctx.python_candidates.insert(blocker);
+    w.run({s.ship, blocker, s.target});
+    expect_ends_at(w, {0.0, 50.0, 0.0});
+    EXPECT_EQ(w.skipped(BeamSkip::Blocker), 1);
+    EXPECT_EQ(w.total_skipped(), 1);
+}
+
+// Tractors are unchanged (spec section 3): a ship in a tractor's line is
+// never consulted, the tractor ends on its target.
+TEST(BeamFeed, TractorIgnoresBlocker) {
+    World w;
+    const int64_t ship = w.ship(0.0, 0.0, 0.0);
+    const int64_t t = w.ship(0.0, 50.0, 0.0);
+    const int64_t blocker = w.ship(0.0, 25.0, 0.0);
+    w.shields(blocker);
+    w.ctx.python_candidates.insert(blocker);  // would count, if consulted
+    BeamPlanet p;
+    p.set = w.set;
+    p.centre = {0.0, 30.0, 0.0};
+    p.radius = 5.0;
+    w.ctx.planets.push_back(p);
+    w.bank(w.system(ship, /*tractor=*/true), t);
+    w.run({ship, blocker, t});
+    EXPECT_TRUE(w.phasers.empty());
+    ASSERT_EQ(w.tractors.size(), 2u);
+    for (const BeamOut& d : w.tractors) EXPECT_EQ(d.target, (Vec3{0.0, 50.0, 0.0}));
+    EXPECT_EQ(w.total_skipped(), 0);
+}
+
+// A pair across two regions of one frame: the damage step never lands
+// there (host_loop._same_set stops the bank), so the blocker check, which
+// works in the shooter's set, is not run and the beam ends on its target.
+TEST(BeamFeed, CrossRegionPairIsNotBlocked) {
+    World w;
+    const int64_t s1 = w.add_set(7, {0.0, 0.0, 0.0});
+    const int64_t s2 = w.add_set(7, {1000.0, 0.0, 0.0});
+    w.ctx.view = s1;
+    const int64_t ship = w.ship(0.0, 0.0, 0.0, s1);
+    const int64_t t = w.ship(-1000.0, 50.0, 0.0, s2);  // (0, 50, 0) in s1
+    const int64_t blocker = w.ship(0.0, 25.0, 0.0, s1);
+    w.shields(blocker);
+    w.bank(w.system(ship), t);
+    w.run({ship, blocker, t});
+    expect_ends_at(w, {0.0, 50.0, 0.0});
+    EXPECT_EQ(w.total_skipped(), 0);
 }

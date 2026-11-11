@@ -3,8 +3,10 @@
 #include <array>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
+#include "dauntless/combat/beam_block.h"
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/frames_table.h"
 #include "dauntless/combat/k2_beams.h"
@@ -25,7 +27,14 @@
 // (outer shell, inner core) pair per bank, each end in its own object's set
 // and then in RENDER space. The beam stops on the shield bubble while a
 // facing holds, else on the hull mesh trace, else the sphere tier, else the
-// aim point. The geometry is beam_geometry.h's and beam_trace.h's (the K2
+// aim point -- unless, for a PHASER whose ship and target share one set,
+// something is in the way (THE BLOCKER, spec docs/superpowers/specs/
+// 2026-11-11-beam-blocking-design.md): first_blocker (beam_block.h, the
+// call the damage step makes) over the feed's ships and ctx.planets, with
+// contact_dist = |that endpoint - the emitter|, and the beam ends on the
+// blocker's shield bubble entry if it was met there, else its point -- where
+// the damage lands. Tractors are never blocked (spec section 3). The
+// geometry is beam_geometry.h's and beam_trace.h's (the K2
 // kernel's own ports); the engine/systems/frames.py helpers it needs are
 // frames_internal.h's (shared with the torpedo feed).
 // Every float is as the Python builders made it: double, the same operand
@@ -52,6 +61,12 @@ struct BeamFeedCtx {
     // TRACTOR_BEAM_BRIGHTNESS and TRACTOR_BEAM_END_WIDTH_SCALE.
     double width_mutator = 0.0, phaser_brightness = 0.0,
            tractor_brightness = 0.0, tractor_end_width_scale = 0.0;
+    // THE BLOCKER (beam_block.h): the planets of the sets the feed's ships
+    // are in (native_combat._k2_planet_rows, the K2 rows), and the
+    // candidates only Python may decide (native_combat.
+    // _k2_python_candidates).
+    std::vector<BeamPlanet> planets;
+    std::unordered_set<int64_t> python_candidates;
 };
 
 // One beam descriptor (set_phaser_beams' dict), before beam_from_dict.
@@ -81,6 +96,10 @@ struct BeamOut {
 //   Shields        a non-ShipClass target with a REAL GetShields (no port)
 //   Geometry       any other refusal of the geometry (beam_geometry.h)
 //   Error          any other exception (none is known to be reachable)
+//   Blocker        first_blocker needed Python (beam_block.h, NeedPython).
+//                  NOT a dropped item: the pair is still drawn, to the
+//                  endpoint it would have without the blocker check (the
+//                  feed has no Python fallback, phase 6 follow-up 4)
 enum class BeamSkip : int {
     ShipRow,
     NotShipClass,
@@ -93,6 +112,7 @@ enum class BeamSkip : int {
     Shields,
     Geometry,
     Error,
+    Blocker,
     kCount
 };
 const char* beam_skip_name(BeamSkip w);

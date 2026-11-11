@@ -18824,7 +18824,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // "frames" {Set handle: (frame id, ax, ay, az)}, "use_memo", the
         // four host_loop constants ("width_mutator", "phaser_brightness",
         // "tractor_brightness", "tractor_end_width_scale"), and K2's
-        // "npc_shields_off" / "player" / "iids" / "trace" (k2_apply_ctx). The
+        // "npc_shields_off" / "player" / "iids" / "trace" / "planets" /
+        // "python_candidates" (k2_apply_ctx; the last two, THE BLOCKER's,
+        // are this call's only, absent = none). The
         // iid table persists here across calls, replaced only when ctx
         // carries "iids", as K2's does. Both beam vectors are assigned once
         // the whole feed is built. The mirror never makes it raise: an item
@@ -18856,6 +18858,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       ctx["tractor_brightness"].cast<double>();
                   c.tractor_end_width_scale =
                       ctx["tractor_end_width_scale"].cast<double>();
+                  // THE BLOCKER (beam_feed.h): K2's "planets" and
+                  // "python_candidates", per call (k2_apply_ctx's parse).
+                  c.planets = std::move(k2.planets);
+                  c.python_candidates = std::move(k2.python_candidates);
                   // The table is lent to the call and handed back, thrown
                   // or not.
                   std::vector<cb::BeamOut> phasers, tractors;

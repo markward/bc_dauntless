@@ -6444,10 +6444,12 @@ def k2_phasers(ships, dt, ship_instances, planet_instances=None) -> bool:
 # Frames the native feed built, and the items it skipped since the last
 # reset, by reason: the binding's (beam_feed.h, BeamSkip, in its order) and
 # "view_row" (the viewed set has no Set row: nothing is drawn that frame).
+# "blocker" drops nothing: the beam was drawn to its target's endpoint
+# because its blocker check needed Python.
 beam_feed_native = 0
 _BEAM_SKIPS = ("ship_row", "not_ship_class", "target_row", "containing_set",
                "frames", "part_stale", "mount_unknown", "colour_unset",
-               "shields", "geometry", "error", "view_row")
+               "shields", "geometry", "error", "blocker", "view_row")
 _beam_skips = dict.fromkeys(_BEAM_SKIPS, 0)
 # The key of the iids table combat_beam_feed holds (it keeps its own, apart
 # from K2's and K3's): as _k2_iids_sent.
@@ -6528,12 +6530,20 @@ def _count_skips(table, got, feed) -> None:
                   "the rest of the frame is drawn" % (feed, why))
 
 
-def beam_feed(ships, ship_instances) -> bool:
+def beam_feed(ships, ship_instances, planet_instances=None) -> bool:
     """This frame's phaser and tractor beam feeds, built natively from the
     mirror and pushed: True. False only when host_io has no native module
     (nothing is pushed). Part slots made stale since the last step boundary
     are resolved first (O(1) when none is), so a late bump cannot reach the
-    aim points."""
+    aim points.
+
+    A phaser beam ends on the first object in its path, as the damage step
+    lands it (beam_feed.h, THE BLOCKER; beam_block.h first_blocker): the
+    candidates are `ships` in order, and the planets of their sets as K2
+    sends them (_k2_planet_rows, each with its `planet_instances` entry:
+    host_loop's Planet -> InstanceId). A candidate whose class overrides a
+    mirrored read (_k2_python_candidates) needs Python, which the feed does
+    not have: that beam keeps its target's endpoint, counted "blocker"."""
     global beam_feed_native, _beam_step_memo
     hl = _feed_ready()
     if hl is None:
@@ -6569,6 +6579,9 @@ def beam_feed(ships, ship_instances) -> bool:
     ctx["phaser_brightness"] = hl.PHASER_BEAM_BRIGHTNESS
     ctx["tractor_brightness"] = hl.TRACTOR_BEAM_BRIGHTNESS
     ctx["tractor_end_width_scale"] = hl.TRACTOR_BEAM_END_WIDTH_SCALE
+    # THE BLOCKER: the K2 rows, so the drawn end and the damage agree.
+    ctx["planets"] = _k2_planet_rows(ships, planet_instances)
+    ctx["python_candidates"] = _k2_python_candidates(ships)
     try:
         _n_p, _n_t, skipped = _h.combat_beam_feed(ships, ctx)
     except BaseException:

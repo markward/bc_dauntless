@@ -1539,15 +1539,19 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
 
     if push_render_data:
         _push_combat_render_data(ships_list, ship_instances=ship_instances,
-                                 ship_emitters=ship_emitters, player=player)
+                                 ship_emitters=ship_emitters, player=player,
+                                 planet_instances=planet_instances)
 
 
 def _push_combat_render_data(ships_list, *, ship_instances=None,
-                             ship_emitters=None, player=None) -> None:
+                             ship_emitters=None, player=None,
+                             planet_instances=None) -> None:
     """Build and push the per-frame combat VFX feeds (torpedoes, dynamic
     lights, shockwaves, hit VFX, particles, phaser and tractor beams), every
     world position in RENDER space (frames.to_render) -- so it runs after
-    the render origin is set for the frame (_apply_render_origin)."""
+    the render origin is set for the frame (_apply_render_origin).
+    `planet_instances` (session.planet_instances) lets a drawn phaser beam
+    end on a planet's mesh, as the damage step's beam_blockers does."""
     # Per-frame VFX descriptor lists route through the host_io façade, which
     # no-ops when the native module is absent (headless). The hit/damage
     # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
@@ -1566,8 +1570,10 @@ def _push_combat_render_data(ships_list, *, ship_instances=None,
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
         host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
         # Both beam feeds natively from the mirror (native_combat.
-        # beam_feed), as the torpedoes: no Python fallback.
-        _native_combat.beam_feed(ships_list, ship_instances)
+        # beam_feed), as the torpedoes: no Python fallback. A phaser beam
+        # ends on the first object in its path, where the damage lands.
+        _native_combat.beam_feed(ships_list, ship_instances,
+                                 planet_instances=planet_instances)
 
 
 def _build_ship_emitter_cache(ship, specs_of=None):
@@ -13510,7 +13516,8 @@ def run(mission_name: Optional[str] = None,
                     _ships_this_tick,
                     ship_instances=(session.ship_instances if session is not None else None),
                     ship_emitters=(session.ship_emitters if session is not None else None),
-                    player=player)
+                    player=player,
+                    planet_instances=(session.planet_instances if session is not None else None))
 
             frame_profiler.mark("spv")
             # --- Ship Property Viewer override (dev-only) ---

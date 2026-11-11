@@ -10,10 +10,13 @@
 #include "dauntless/combat/beam_feed.h"
 
 #include <array>
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
+#include "dauntless/combat/beam_block.h"
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
@@ -112,9 +115,21 @@ bool feed_shields_block(const Mirror& m, const BeamFeedCtx& ctx,
 
 // ── Where the drawn beam stops ──────────────────────────────────────────────
 
-Vec3 beam_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t target,
-                   const Vec3& emitter_pos, const Vec3& aim_unit,
-                   double raw_length, const Vec3& fallback) {
+// THE BLOCKER's inputs for one phaser walk (null for the tractor walk:
+// tractors are never blocked, spec section 3). `view_offsets` is
+// frames.view_offset(set) for every set of ctx.frames and None for -1, made
+// once per build from the same table the feed draws with.
+struct Blocking {
+    const std::vector<int64_t>& ships;
+    const std::unordered_map<int64_t, std::optional<Vec3>>& view_offsets;
+};
+
+// The endpoint the beam would have with nothing in its path: the target's
+// shield bubble entry while a facing holds, else the hull mesh trace, else
+// the sphere tier, else the aim point.
+Vec3 target_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t target,
+                     const Vec3& emitter_pos, const Vec3& aim_unit,
+                     double raw_length, const Vec3& fallback) {
     // if raw_length > 1e-6 and combat.shields_block(target):
     if (raw_length > 1e-6 && feed_shields_block(m, ctx, target)) {
         const std::optional<Vec3> entry = shield_bubble_entry(
@@ -145,15 +160,63 @@ Vec3 beam_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t target,
     return fallback;
 }
 
+// Where the drawn beam stops: the target's endpoint, unless the first object
+// in the path (beam_block.h first_blocker, the call the damage step makes:
+// host_loop._phaser_step_bank, k2_beams.cc BLOCK) is nearer -- then the
+// blocker's shield bubble entry when it was met there, else its point (a
+// mesh hit, or a planet's). contact_dist is beam_blockers.contact_distance:
+// _dist(emitter, the target's endpoint), whose point is the damage step's
+// `bubble_entry if bubble_entry is not None else impact_point`.
+// `blocker_python`: first_blocker needed Python (NeedPython); the feed has
+// no Python fallback, so the target's endpoint stands.
+Vec3 beam_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
+                   int64_t target, const Vec3& emitter_pos,
+                   const Vec3& aim_unit, double raw_length,
+                   const Vec3& fallback, const Blocking* blocking,
+                   bool& blocker_python) {
+    const Vec3 end = target_endpoint(m, ctx, target, emitter_pos, aim_unit,
+                                     raw_length, fallback);
+    if (blocking == nullptr) return end;
+    // beam_blockers._dist(emitter, p): math.sqrt of the summed squares.
+    const double ddx = end[0] - emitter_pos[0];
+    const double ddy = end[1] - emitter_pos[1];
+    const double ddz = end[2] - emitter_pos[2];
+    const double contact_dist = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+    const BeamBlockInputs in{m,
+                             ctx.hooks,
+                             ctx.iids,
+                             blocking->view_offsets,
+                             ctx.npc_shields_off,
+                             ctx.player,
+                             blocking->ships,
+                             ctx.planets,
+                             &ctx.python_candidates};
+    std::optional<BeamBlocker> b;
+    try {
+        b = first_blocker(in, ship, target, emitter_pos, aim_unit,
+                          contact_dist);
+    } catch (const NeedPython&) {
+        blocker_python = true;
+        return end;
+    }
+    if (!b) return end;
+    return b->bubble ? *b->bubble : b->point;
+}
+
 // ── One bank's descriptor pair, in render space ─────────────────────────────
 // The pair (outer, inner) in RENDER space, or nullopt where either returns
-// []. `ship_set` is the memo's set_of(ship).
+// []. `ship_set` is the memo's set_of(ship). `blocking` (phasers only): the
+// beam may stop on the first object in its path, but only for a ship and
+// target in ONE set -- the only pair the damage step lands on
+// (host_loop._phaser_step_bank's _same_set stop), and the only one whose
+// emitter is in the shooter set's coordinates, which first_blocker works in.
 
 using Pair = std::array<BeamOut, 2>;
 
 std::optional<Pair> beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
                               int64_t ship_set, int64_t bank,
-                              double brightness, double end_width_scale) {
+                              double brightness, double end_width_scale,
+                              const Blocking* blocking, bool& blocker_python) {
     const SubsystemRow& b = sub(m, bank);
     // target = bank._target; if target is None: return []
     const int64_t target = b._target;
@@ -185,8 +248,10 @@ std::optional<Pair> beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
     Vec3 beam_end = target_pos;
     if (raw_length > 1e-6) {
         const Vec3 aim_unit{dx / raw_length, dy / raw_length, dz / raw_length};
-        beam_end = beam_endpoint(m, ctx, target, emitter_t, aim_unit,
-                                 raw_length, beam_end);
+        beam_end = beam_endpoint(m, ctx, ship, target, emitter_t, aim_unit,
+                                 raw_length, beam_end,
+                                 s_set == t_set ? blocking : nullptr,
+                                 blocker_python);
         const double cdx = beam_end[0] - emitter_t[0];
         const double cdy = beam_end[1] - emitter_t[1];
         const double cdz = beam_end[2] - emitter_t[2];
@@ -252,11 +317,12 @@ int64_t set_of(const Mirror& m, const BeamFeedCtx& ctx, int64_t ship) {
 
 // One walk: the phaser beams, or the tractor beams. A ship whose own state
 // the mirror cannot answer is one skip; a bank's pair that cannot be
-// answered is one skip; everything else is drawn.
+// answered is one skip; everything else is drawn. A drawn pair whose
+// blocker check needed Python is counted "blocker" (drawn all the same).
 void build_one(Mirror& m, const std::vector<int64_t>& ships,
                const BeamFeedCtx& ctx, bool tractor, double brightness,
-               double end_width_scale, std::vector<BeamOut>& out,
-               BeamSkips& skips) {
+               double end_width_scale, const Blocking* blocking,
+               std::vector<BeamOut>& out, BeamSkips& skips) {
     // if memo.view is None: return out
     if (ctx.view == -1) return;
     for (const int64_t ship : ships) {
@@ -286,15 +352,19 @@ void build_one(Mirror& m, const std::vector<int64_t>& ships,
         if (!ok || banks.empty() || pset == -1) continue;
         for (const int64_t bank : banks) {
             std::optional<Pair> pair;
+            bool blocker_python = false;
             if (!guarded(skips, [&] {
                     pair = beam_pair(m, ctx, ship, pset, bank, brightness,
-                                     end_width_scale);
+                                     end_width_scale, blocking,
+                                     blocker_python);
                 }))
                 continue;
             if (!pair) continue;
             out.reserve(out.size() + 2);  // the pair is appended whole
             out.push_back((*pair)[0]);
             out.push_back((*pair)[1]);
+            if (blocker_python)
+                ++skips[static_cast<size_t>(BeamSkip::Blocker)];
         }
     }
 }
@@ -314,6 +384,7 @@ const char* beam_skip_name(BeamSkip w) {
         case BeamSkip::Shields: return "shields";
         case BeamSkip::Geometry: return "geometry";
         case BeamSkip::Error: return "error";
+        case BeamSkip::Blocker: return "blocker";
         case BeamSkip::kCount: break;
     }
     return "?";
@@ -325,11 +396,26 @@ void build_beam_feed(Mirror& m, const std::vector<int64_t>& ships,
     phasers.clear();
     tractors.clear();
     skips.fill(0);
+    // THE BLOCKER's view offsets: frames.view_offset(set) per set of the
+    // table (a set it cannot answer is left out: first_blocker then needs
+    // Python for a candidate there with an instance), None for no set.
+    std::unordered_map<int64_t, std::optional<Vec3>> view_offsets{
+        {-1, std::nullopt}};
+    if (ctx.view != -1) {
+        for (const auto& entry : ctx.frames) {
+            try {
+                view_offsets[entry.first] = view_offset(m, ctx, entry.first);
+            } catch (const detail::FramesUnanswerable&) {
+            }
+        }
+    }
+    const Blocking blocking{ships, view_offsets};
     // beam_from_dict's default end_width_scale for a phaser dict: 1.0.
     build_one(m, ships, ctx, /*tractor=*/false, ctx.phaser_brightness, 1.0,
-              phasers, skips);
+              &blocking, phasers, skips);
+    // Tractors are never blocked (spec section 3).
     build_one(m, ships, ctx, /*tractor=*/true, ctx.tractor_brightness,
-              ctx.tractor_end_width_scale, tractors, skips);
+              ctx.tractor_end_width_scale, nullptr, tractors, skips);
 }
 
 }  // namespace dauntless::combat
