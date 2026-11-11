@@ -3,7 +3,7 @@
 Retail BC ships all its game scripts as Python 1.5 .pyc only (1201 on the
 GOG install), and the SDK ships each one's .py. For every stock .pyc that
 engine.py15 accepts, the lifted AST must equal what the SDK loader parses
-from the .py -- ast.parse(_fix_py2_syntax(source)) -- after this CLOSED
+from the .py -- ast.parse(fix_source(source)) -- after this CLOSED
 normalisation, each item being something 1.5 bytecode cannot carry:
 
   * `pass` statements;
@@ -26,7 +26,7 @@ import pytest
 
 from engine import paths, py15
 from tests.helpers.bc_assets import require_game_dir
-from tools.mission_harness import _fix_py2_syntax
+from engine.py15.source import fix_source
 
 ACCEPTED_FLOOR = 514
 
@@ -69,10 +69,10 @@ def _normalise(tree):
 
 def _sdk_tree(path):
     # Exactly what the SDK loader does to a .py before its AST transforms.
-    source = path.read_text(encoding="utf-8", errors="replace").expandtabs(4)
+    source = path.read_text(encoding="utf-8", errors="replace")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return ast.parse(_fix_py2_syntax(source), filename=str(path))
+        return ast.parse(fix_source(source), filename=str(path))
 
 
 @pytest.fixture(scope="module")
