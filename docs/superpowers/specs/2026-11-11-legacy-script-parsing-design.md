@@ -1,6 +1,6 @@
 # Legacy script parsing: Python 1.5 source and bytecode
 
-**Status:** in progress on `feat/legacy-script-parsing`. Part 1 (source) done; part 2 (bytecode control flow) in progress.
+**Status:** done on `feat/legacy-script-parsing`, not merged. Live no-regression check by Mark 2026-11-11: a campaign mission, Quick Battle with every installed mod, and the LC Intrepid's bytecode-only photon and tricobalt torpedoes all ran as before. The new control-flow lifting has no in-game proof yet: no installed mod needs it.
 **Date:** 2026-11-11
 **Related:** `2026-10-15-pyc-only-mod-modules-design.md` (this extends its §9 "control flow" and supersedes its D2), `2026-09-08-mod-overlay-design.md`
 
