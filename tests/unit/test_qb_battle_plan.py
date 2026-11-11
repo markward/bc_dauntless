@@ -79,7 +79,8 @@ def test_battle_plan_orders_names_registries_and_levels():
     plan = sc.battle_plan(s, INDEX)
 
     assert plan.player == sc.PlayerOrder(ship_file="Galaxy", class_id="Galaxy",
-                                         registry="Dauntless", display_name="USS Dauntless")
+                                         registry="Dauntless", display_name="USS Dauntless",
+                                         group_id=pg.id)
     ids = [o.entry_id for o in plan.orders]
     assert ids == [esc.id, w.id, v.id, x.id]
     o_esc, o_w, o_v, o_x = plan.orders
@@ -140,3 +141,11 @@ def test_startable_needs_a_resolved_enemy_order():
     assert plan.orders == () and plan.startable is False
     s.add_ship(s.groups[1].id, "Warbird")
     assert sc.battle_plan(s, INDEX).startable is True
+
+
+def test_battle_plan_carries_wings_switch():
+    s = sc.default_scenario()
+    s.add_ship(s.groups[1].id, "Warbird")
+    assert sc.battle_plan(s, INDEX).wings is True
+    s.wings = False
+    assert sc.battle_plan(s, INDEX).wings is False

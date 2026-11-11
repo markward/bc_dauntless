@@ -171,7 +171,8 @@ def test_rows_carry_no_subsystem_tree():
         for key in ("subsystems", "expanded", "has_subsystems"):
             assert key not in row
         assert set(row) == {"name", "label", "affiliation", "hull", "shields",
-                            "has_shields", "dist_km", "marker"}
+                            "has_shields", "dist_km", "marker", "commander",
+                            "focus"}
     finally:
         _teardown()
 

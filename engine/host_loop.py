@@ -7740,6 +7740,8 @@ def reset_mission_state(renderer=None) -> None:
     _qb_sim_restore.reset()
     from engine.quickbattle import battle_end as _qb_end
     _qb_end.reset()
+    from engine.wings import service as _wing_service
+    _wing_service.reset()
     from engine.ui import target_markers as _target_markers
     _target_markers.clear()
     from engine.appc import particles
@@ -12191,6 +12193,8 @@ def run(mission_name: Optional[str] = None,
                 _far_dials.register()
                 from engine.appc import sensor_dials as _sensor_dials
                 _sensor_dials.register()
+                from engine.wings import dials as _wing_dials
+                _wing_dials.register()
                 from engine.appc import running_light_dials as _rl_dials
                 _rl_dials.register()
                 from engine.appc import warp_in_dials as _warp_in_dials

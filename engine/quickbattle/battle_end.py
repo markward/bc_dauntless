@@ -264,6 +264,10 @@ def begin(qb, plan) -> None:
         _guard("protect marker", _set_marker, name, "protect")
     for name in targets:
         _guard("target marker", _set_marker, name, "target")
+    # Groups fight as wings. Before km_targeting, which wraps the same AI
+    # modules on top of the wings wrapper (wings_qb).
+    from engine.quickbattle import wings_qb
+    _guard("wings", wings_qb.arm, qb, plan)
     if protected or targets:
         # Enemies weight every protected ship and friendlies every hunt
         # target, E6M1's way (km_targeting). Before StartSimulation2's AI
@@ -807,6 +811,13 @@ def reset() -> None:
         km_targeting.reset()
     except Exception:
         _log.exception("quickbattle battle end: could not reset enemy targeting")
+    try:
+        # After km_targeting: its wrapper sits on top of the wings wrapper,
+        # and its restore would otherwise put the wings wrapper back.
+        from engine.quickbattle import wings_qb
+        wings_qb.reset()
+    except Exception:
+        _log.exception("quickbattle battle end: could not reset wings")
     _state = None
     _qb = None
     _ship_ids.clear()

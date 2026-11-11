@@ -493,6 +493,15 @@ function qbsVcColumn(stack) {
            qbsEsc(stack.side) + '">+ Add condition</button>';
 }
 
+// The battle settings strip: "Wing commanders" On/Off (Python's `wings`).
+// The button sends the flip; the page keeps no state of its own.
+function qbsBattleRow(wings) {
+    return '<span class="vc-battle__label">Wing commanders</span>' +
+        '<span class="vc-battle__hint">Groups pick leaders and fight together</span>' +
+        '<button class="cp-toggle' + (wings ? ' cp-toggle--on' : '') + '" data-action="wings" ' +
+        'data-arg="' + (wings ? 'off' : 'on') + '">' + (wings ? 'On' : 'Off') + '</button>';
+}
+
 function renderVictory() {
     var s = QBS.setup, v = s.victory, on = s.view === 'victory' && !!v;
     qbsEl('qbs-groups').hidden = on;
@@ -500,6 +509,7 @@ function renderVictory() {
     qbsEl('qbs-vcond').hidden = !on;
     qbsEl('qbs-victory-btn').classList.toggle('qbs-victory-btn--on', on);
     if (!on) return;
+    qbsEl('qbs-vc-battle').innerHTML = qbsBattleRow(s.wings !== false);
     v.stacks.forEach(function (stack) {
         if (!QBS_VC[stack.side]) return;
         qbsEl('qbs-vc-' + stack.side).innerHTML = qbsVcColumn(stack);
@@ -799,6 +809,7 @@ function qbsClick(ev) {
         break;
     // victory view (the verbs are Python's; the page keeps no state of its own)
     case 'victory-view': dauntlessEvent('quick-battle-setup/victory-view'); break;
+    case 'wings': dauntlessEvent('quick-battle-setup/wings:' + arg); break;
     // conditions ("<side>:<kind>", "<cid>", "<cid>:<mode>", "<cid>:<eid>", "<cid>:<n>")
     case 'cond-add': dauntlessEvent('quick-battle-setup/cond-add:' + arg); break;
     case 'cond-remove': dauntlessEvent('quick-battle-setup/cond-remove:' + arg); break;

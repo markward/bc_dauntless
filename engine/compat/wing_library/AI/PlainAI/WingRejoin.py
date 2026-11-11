@@ -1,0 +1,98 @@
+"""AI.PlainAI.WingRejoin -- fly back to the wing's current commander.
+
+Served by the claimed-namespace rule (engine/compat/claimed.py); spec
+2026-11-09-wing-leaders-phase-a-design.md §7, §11.
+
+    pRejoin = App.PlainAI_Create(pShip, "WingRejoin")
+    pRejoin.SetScriptModule("WingRejoin")
+
+The stock FollowObject manoeuvre (AI/PlainAI/FollowObject.py, its default
+rough distances), aimed at the commander of the ship's wing. The commander
+is read from the wing on every Update, so a handover retargets the
+manoeuvre with no tree surgery. Re-reading it also makes the manoeuvre
+immune to a SetTarget call (FollowObject maps SetTarget to
+SetFollowObjectName). In the wing tree none reaches it today -- SelectTarget
+broadcasts SetTarget only to the AIs beneath its own node
+(AI/Preprocessors.py:1384), and the wing branches sit above the stock tree --
+so that is defensive, for a tree built some other way.
+
+* No wing, or a leaderless wing (no commander): US_DONE, as FollowObject
+  reports when it has nothing to follow. Leaderless is permanent, so is DONE.
+* A commander beyond leash_gu + leash_slack_gu: in-system warp back to
+  regroup_gather_gu off it (_WarpBack, ruling 2026-11-10), then follow.
+* A commander not in this ship's set (it died and was removed, or warped):
+  stop the ship and hold US_ACTIVE, rather than FollowObject's US_DONE. A
+  PlainAI that returns DONE is latched for good; the brain hands over, or
+  stands the rejoin flags down while command is away, on its next tick.
+"""
+import App
+import AI.PlainAI.FollowObject
+
+_FollowObject = AI.PlainAI.FollowObject.FollowObject
+
+
+class WingRejoin(_FollowObject):
+    def __init__(self, pCodeAI):
+        _FollowObject.__init__(self, pCodeAI)
+        # FollowObject's one required parameter. The ship's own name stands
+        # in when there is no commander yet; Update re-reads it anyway.
+        self.SetFollowObjectName(self.GetCommanderName() or self._OwnName())
+
+    def _OwnName(self):
+        pShip = self.pCodeAI.GetShip()
+        return pShip.GetName() if pShip is not None else ""
+
+    def GetCommanderName(self):
+        from engine.wings import roster
+        wing = roster.wing_of(self._OwnName())
+        if wing is None or wing.leaderless:
+            return None
+        return wing.commander
+
+    def Update(self):
+        sCommander = self.GetCommanderName()
+        if sCommander is None:
+            return App.ArtificialIntelligence.US_DONE
+        self.SetFollowObjectName(sCommander)
+        pShip = self.pCodeAI.GetShip()
+        pSet = pShip.GetContainingSet() if pShip is not None else None
+        pCommander = (App.ObjectClass_GetObject(pSet, sCommander)
+                      if pSet is not None else None)
+        if pSet is not None and pCommander is None:
+            pShip.SetImpulse(0.0, App.TGPoint3_GetModelForward(),
+                             App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+            return App.ArtificialIntelligence.US_ACTIVE
+        if pCommander is not None and self._WarpBack(pShip, pCommander):
+            return App.ArtificialIntelligence.US_ACTIVE
+        return _FollowObject.Update(self)
+
+    def _WarpBack(self, pShip, pCommander):
+        """Beyond rejoin_warp_gu of the commander: in-system warp back to
+        regroup_gather_gu off its surface, with BC's own InSystemWarp (as
+        Intercept uses; it waits for the nose to come round, which
+        FollowObject's turn provides). FollowObject alone flies at impulse
+        and never catches a commander as fast as this ship, e.g. one that
+        warped ahead to another wing's fight (ruling 2026-11-10). A warp
+        already under way runs on; an earlier warp's once-per-cycle latch
+        is cleared first, since that latch is Intercept's, not ours.
+        Between leash + slack and rejoin_warp_gu the member flies back at
+        impulse: warping on every dogfight overshoot had ships skipping
+        about all fight (D play test, 2026-11-10). Each warp begun is
+        logged, so a play-test log tells ours from Intercept's."""
+        from engine.wings import brain, dials, roster
+        if pShip.IsDoingInSystemWarp():
+            return 1
+        vDiff = pCommander.GetWorldLocation()
+        vDiff.Subtract(pShip.GetWorldLocation())
+        fDist = vDiff.Length()
+        if fDist <= dials.get("rejoin_warp_gu"):
+            return 0
+        pShip.StopInSystemWarp()
+        iWarping = pShip.InSystemWarp(pCommander,
+                                      dials.get("regroup_gather_gu"))
+        if iWarping:
+            wing = roster.wing_of(pShip.GetName())
+            brain.log("%s %s rejoin warp -> %s (%.0f GU)"
+                      % (wing.wing_id if wing is not None else "-",
+                         pShip.GetName(), pCommander.GetName(), fDist))
+        return iWarping

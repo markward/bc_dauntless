@@ -414,7 +414,16 @@
 #quick-battle-setup .vc-cols[hidden] { display: none; }
 #quick-battle-setup .qbs-victory-btn--on { background: var(--qbs-purple); border-color: var(--qbs-purple); color: #fff; }
 
-#quick-battle-setup .vc-cols { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+#quick-battle-setup .vc-cols { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+#quick-battle-setup .vc-stacks { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+/* Battle settings strip above the stacks: one On/Off row (Wing commanders). */
+#quick-battle-setup .vc-battle {
+    flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 10px 18px; border-bottom: 1px solid var(--qbs-steel-dim);
+}
+#quick-battle-setup .vc-battle__label { font-size: 14px; }
+#quick-battle-setup .vc-battle__hint { font-size: 12px; color: var(--qbs-dim); }
+#quick-battle-setup .vc-battle .cp-toggle { margin-left: auto; }
 #quick-battle-setup .vc-col { flex: 1 1 0; min-width: 0; min-height: 0; padding: 16px 18px; overflow-x: hidden; overflow-y: auto; }
 #quick-battle-setup .vc-col + .vc-col { border-left: 1px solid var(--qbs-steel-dim); }
 #quick-battle-setup .vc-colhead { display: flex; align-items: baseline; margin-bottom: 10px; }

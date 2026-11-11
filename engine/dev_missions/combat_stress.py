@@ -24,6 +24,12 @@ The mission loads a bridge and stays on it, so by default a capture measures
 the bridge view. DAUNTLESS_DEV_VIEW=exterior switches to the exterior view
 VIEW_AFTER_S after Initialize, as felix_destroy and vesuvi_dust_cloud do.
 
+Env: DAUNTLESS_COMBAT_SHIPS (total AI ships), DAUNTLESS_COMBAT_AVOID (0 = no
+AvoidObstacles), DAUNTLESS_COMBAT_IDLE (1 = nobody fires), DAUNTLESS_DEV_VIEW
+(exterior), DAUNTLESS_COMBAT_WING_SIZE (N > 0 = each side's ships, in creation
+order, fight as wings of N under DauntlessWings; default 0 = no wings; the idle
+mode ignores wings; DAUNTLESS_WINGS=0 disables them everywhere).
+
 Usage:
 
     OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=900 \
@@ -235,6 +241,43 @@ def _place_on_ring(pShip, index: int, total: int) -> None:
         pass
 
 
+def wing_size() -> int:
+    """DAUNTLESS_COMBAT_WING_SIZE, read at use; 0 (default) means no wings."""
+    try:
+        return max(0, int(os.environ.get("DAUNTLESS_COMBAT_WING_SIZE", "0")))
+    except ValueError:
+        return 0
+
+
+def _arm_wings(created, pFriendlies, pEnemies):
+    """Per side, chunk ships (creation order) into wings of wing_size() and
+    arm them. Returns {ship name: Wing}; empty with wings off, size 0 or idle.
+    The player stays out. A wing attacks the OTHER side's group."""
+    n = wing_size()
+    if n <= 0 or idle_enabled():
+        return {}
+    import DauntlessWings
+    if not DauntlessWings.IsEnabled():
+        return {}
+    from engine.wings import roster
+    out = {}
+    for friendly, side, attacked in ((True, "friend", pEnemies),
+                                     (False, "enemy", pFriendlies)):
+        names = [s.GetName() for s, f in created if f == friendly]
+        for k, start in enumerate(range(0, len(names), n)):
+            wid = "cs:%s:%d" % (side, k)
+            DauntlessWings.CreateWing(wid, attacked)
+            chunk = names[start:start + n]
+            for name in chunk:
+                DauntlessWings.AddMember(wid, name)
+            if chunk:
+                roster.wing_of(chunk[0]).side = side
+            DauntlessWings.ArmWing(wid)
+            for name in chunk:
+                out[name] = roster.wing_of(name)
+    return out
+
+
 def Initialize(pMission):
     App.Game_SetDifficultyMultipliers(1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
 
@@ -296,12 +339,16 @@ def Initialize(pMission):
             "spawns ships that never fight, which makes it useless as a "
             "profiling load." % (_ATTACK_AI_MODULE, exc))
 
+    wing_of_ship = _arm_wings(created, pFriendlies, pEnemies)
+
     attached = 0
     failures = []
     for pShip, is_friendly in created:
         # Each side attacks the other's group (or, idle, nobody).
         if idle_enabled():
             pTargets = idle_target_group()
+        elif pShip.GetName() in wing_of_ship:
+            pTargets = wing_of_ship[pShip.GetName()].target_group
         else:
             pTargets = pEnemies if is_friendly else pFriendlies
         try:
@@ -323,6 +370,9 @@ def Initialize(pMission):
                 pAvoid.SetPreprocessingMethod(pScript, "Update")
                 pAvoid.SetContainedAI(pAI)
                 pAI = pAvoid
+            if pShip.GetName() in wing_of_ship:
+                import DauntlessWings
+                pAI = DauntlessWings.WrapTree(pShip, pAI)
             pShip.SetAI(pAI, 0, 0)
             attached += 1
         except Exception as exc:
