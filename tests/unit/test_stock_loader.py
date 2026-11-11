@@ -182,7 +182,10 @@ def test_bare_import_never_finds_an_unlisted_install_file(twin, fake_stock):
     assert listed.loader.also_register_as == "ships.ZZListed"
 
     assert twin._SDKFinder().find_spec("MyShip", None) is None
-    assert twin._SDKFinder().find_spec("ships.MyShip", [str(root / "ships")]) is None
+    # Under a stock folder, "nothing listed" is a hard no: None would hand
+    # the folder to Python's PathFinder, which loads the stray .py.
+    with pytest.raises(ModuleNotFoundError):
+        twin._SDKFinder().find_spec("ships.MyShip", [str(root / "ships")])
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("MyShip")
 
@@ -269,3 +272,70 @@ def test_a_mod_pyc_sibling_counts(twin, tmp_path):
     # ...and a stock sibling of the mod file's package still counts.
     stock = fixer.visit_Import(ast.parse("import QuickBattleGame").body[0])
     assert isinstance(stock, ast.ImportFrom)
+
+
+# --- a stock package's __path__ never reaches the disk (decision 6) --------
+
+@pytest.fixture
+def twin_first():
+    """Put one twin's finder at sys.meta_path[0], so an import through
+    importlib resolves through THAT twin before anything else; and drop
+    every ZZPkg module the test made."""
+    saved = list(sys.meta_path)
+
+    def install(twin):
+        sys.meta_path.insert(0, twin._SDKFinder())
+
+    yield install
+    sys.meta_path[:] = saved
+    for name in [n for n in sys.modules if n == "ZZPkg" or n.startswith("ZZPkg.")]:
+        del sys.modules[name]
+
+
+@pytest.mark.parametrize("twin", TWINS, ids=TWIN_IDS)
+def test_a_stray_file_in_a_stock_package_does_not_import(twin, fake_stock,
+                                                          twin_first):
+    """A stock package's __path__ points into the install. With nothing
+    listed or modded for a name, Python's own PathFinder must not get to
+    search that folder: it would load a stray .py as plain Python 3."""
+    data = _retail("ships").read_bytes()
+    fake_stock({"ZZPkg/__init__.pyc": data, "ZZPkg/Listed.pyc": data},
+               unlisted={"ZZPkg/Stray.py": b"X = 1\n",
+                         "ZZPkg/Loose.pyc": data})
+    twin_first(twin)
+    for stray in ("ZZPkg.Stray", "ZZPkg.Loose"):
+        with pytest.raises(ModuleNotFoundError) as err:
+            importlib.import_module(stray)
+        assert err.value.name == stray
+    assert "ZZPkg.Stray" not in sys.modules
+
+
+@pytest.mark.parametrize("twin", TWINS, ids=TWIN_IDS)
+def test_a_listed_module_and_a_mod_still_import_from_a_stock_package(
+        twin, fake_stock, twin_first, tmp_path):
+    data = _retail("ships").read_bytes()
+    root = fake_stock({"ZZPkg/__init__.pyc": data, "ZZPkg/Listed.pyc": data},
+                      unlisted={"ZZPkg/Stray.py": b"X = 1\n"})
+    mod = _touch(tmp_path / "modroot" / "M" / "Scripts" / "ZZPkg" / "ModOne.py",
+                 "MARKER = 'mod'\n")
+    mods.configure(mods.build_index(tmp_path / "modroot"))
+    twin_first(twin)
+
+    listed = importlib.import_module("ZZPkg.Listed")
+    assert Path(_origin(listed)) == root / "ZZPkg" / "Listed.pyc"
+    modded = importlib.import_module("ZZPkg.ModOne")
+    assert modded.MARKER == "mod"
+    assert Path(_origin(modded)).resolve() == mod.resolve()
+
+
+@pytest.mark.parametrize("twin", TWINS, ids=TWIN_IDS)
+def test_the_path_branch_reads_the_stock_root_at_use(twin, fake_stock):
+    """An import through a package __path__ that aliases a stock folder
+    (Characters -> Bridge/Characters) finds the listed file under the
+    CURRENT stock root, not one captured when the loader was imported."""
+    data = _retail("ships").read_bytes()
+    root = fake_stock({"ZZPkg/__init__.pyc": data, "ZZPkg/Listed.pyc": data})
+    spec = twin._SDKFinder().find_spec("ZZAlias.Listed", [str(root / "ZZPkg")])
+    assert spec is not None
+    assert Path(spec.origin) == root / "ZZPkg" / "Listed.pyc"
+    assert spec.loader.also_register_as == "ZZPkg.Listed"

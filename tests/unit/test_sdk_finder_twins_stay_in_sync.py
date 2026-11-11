@@ -8,12 +8,15 @@ Python-1.5 fallbacks -- has to hold in both, or a mod resolves one way under
 test and another way in the game. That is the worst failure shape available
 to this feature: green tests, wrong game.
 
-The two copies differ only in how they name the same two roots, because one
-file has module-level constants and the other resolves at use:
+The two copies differ only in how they spell the project root:
 
     tests/conftest.py         tools/mission_harness.py
     PROJECT_ROOT              _PROJECT_ROOT
-    STOCK_SCRIPTS             stock_scripts (= _stock_scripts(), a local)
+
+The stock scripts root is NOT an alias: both find_spec bodies open with the
+same `stock_scripts = _stock.root()`, resolved at use, and that line is
+compared like every other. (conftest used to capture it as a module-level
+STOCK_SCRIPTS, which silently ignored a root a test injected.)
 
 Both load stock modules lifted from the install through engine.stock_scripts
 (spec 2026-11-11-no-sdk-runtime §4.2). The test loader's one extra -- the
@@ -42,7 +45,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # substring replacement over source text.
 _NAME_ALIASES = {
     "_PROJECT_ROOT": "PROJECT_ROOT",
-    "STOCK_SCRIPTS": "stock_scripts",
 }
 
 
@@ -77,14 +79,6 @@ def _normalised_body(func_or_method):
     """A function's body as a normalised AST dump, docstring dropped."""
     tree = ast.parse(textwrap.dedent(inspect.getsource(func_or_method)))
     body = _strip_docstring(tree.body[0].body)
-    # mission_harness opens find_spec with `stock_scripts = _stock_scripts()`,
-    # the local standing in for conftest's module-level STOCK_SCRIPTS
-    # constant. Drop it so the bodies line up; everything after it must match.
-    first = body[0] if body else None
-    if (isinstance(first, ast.Assign)
-            and isinstance(first.targets[0], ast.Name)
-            and first.targets[0].id == "stock_scripts"):
-        body = body[1:]
     return "\n".join(ast.dump(_NormaliseNames().visit(stmt)) for stmt in body)
 
 
@@ -135,10 +129,11 @@ def test_the_comparison_would_actually_notice_a_divergence():
                          for s in _strip_docstring(tree.body[0].body))
 
     # A real logic difference is visible...
-    assert _dump("def f(self, n):\n    return STOCK_SCRIPTS / n\n") != \
-        _dump("def f(self, n):\n    return STOCK_SCRIPTS / n.lower()\n")
-    # ...and the two spellings of the same root are not.
-    assert _dump("def f(self):\n    return STOCK_SCRIPTS\n") == \
+    assert _dump("def f(self, n):\n    return stock_scripts / n\n") != \
+        _dump("def f(self, n):\n    return stock_scripts / n.lower()\n")
+    # ...a stock root captured at import is not the one read at use...
+    assert _dump("def f(self):\n    return STOCK_SCRIPTS\n") != \
         _dump("def f(self):\n    return stock_scripts\n")
+    # ...and the two spellings of the project root are the same.
     assert _dump("def f(self):\n    return _PROJECT_ROOT\n") == \
         _dump("def f(self):\n    return PROJECT_ROOT\n")

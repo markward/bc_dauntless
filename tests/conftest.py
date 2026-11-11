@@ -72,10 +72,9 @@ if _paths.DATA_DIR_ENV not in os.environ:
 os.environ.setdefault(_paths.ENV_VARS["game"], str(_RESOLUTION.game))  # paths-guard: ENV_VARS kind label
 os.environ.setdefault(_mods.ENV_VAR, str(PROJECT_ROOT / "mods"))
 
-# The install's stock scripts root: stock modules are its retail .pyc,
-# lifted (engine/stock_scripts.py), as in the game.
-STOCK_SCRIPTS = _paths.stock_scripts()
-
+# Stock modules are the install's retail .pyc, lifted
+# (engine/stock_scripts.py), as in the game. Their root is asked of
+# _stock.root() at use, never captured here: a test may inject another.
 from engine import stock_scripts as _stock  # noqa: E402
 
 _STOCK_FIXTURE_TGL = _dev_sdk.sdk_data() / "TGL"
@@ -697,6 +696,7 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
 
     def find_spec(self, fullname, path, target=None):
         from engine import stock_scripts as _stock
+        stock_scripts = _stock.root()
         rel = fullname.replace(".", "/")
         if (PROJECT_ROOT / (rel + ".py")).exists():
             return None
@@ -740,14 +740,16 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
         # a stock directory (e.g. Characters -> Bridge/Characters).
         if path:
             child = fullname.rpartition(".")[2]
+            _in_stock = False
             for _search_dir in path:
                 _p = Path(_search_dir)
-                if str(STOCK_SCRIPTS) not in str(_p):
+                if str(stock_scripts) not in str(_p):
                     continue
                 try:
-                    _dir_rel = _p.relative_to(STOCK_SCRIPTS).as_posix()
+                    _dir_rel = _p.relative_to(stock_scripts).as_posix()
                 except ValueError:
                     continue
+                _in_stock = True
                 _logical = child if _dir_rel == "." else f"{_dir_rel}/{child}"
                 _sf = _stock.find(_logical)
                 _qual = (_sf.rel if _sf is not None else _logical).replace("/", ".")
@@ -769,6 +771,14 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                 if _sf.is_package:
                     spec.submodule_search_locations = [str(_sf.path.parent)]
                 return spec
+            # Nothing listed and nothing modded under a stock folder: stop
+            # here. Returning None would let Python's own PathFinder search
+            # that __path__ and load a stray .py as plain Python 3 (decision
+            # 6: only manifest-listed stock modules load from the install).
+            # name= lets `from Pkg import attr` treat it as "no submodule".
+            if _in_stock:
+                raise ModuleNotFoundError(
+                    f"No module named {fullname!r}", name=fullname)
         # Python 1.5 implicit relative import fallback: BC engine added each
         # package directory to sys.path, so bare `import X` inside Bridge/ found
         # Bridge/X. Search the manifest (never the disk) for the leaf name.
@@ -778,7 +788,7 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             frame = sys._getframe(1)
             while frame is not None:
                 co_file = frame.f_code.co_filename
-                if str(STOCK_SCRIPTS) in co_file:
+                if str(stock_scripts) in co_file:
                     caller_dir = Path(co_file).parent
                     break
                 frame = frame.f_back
@@ -842,9 +852,11 @@ def pytest_configure(config):
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
 
+    stock_scripts = _stock.root()
+
     def _stock_dir(rel):
-        found = _case_paths.resolve(STOCK_SCRIPTS, rel)
-        return str(found if found is not None else STOCK_SCRIPTS / rel)
+        found = _case_paths.resolve(stock_scripts, rel)
+        return str(found if found is not None else stock_scripts / rel)
 
     # Install SDK finder before the default finders so SDK scripts get our
     # compatibility loader instead of the standard one.

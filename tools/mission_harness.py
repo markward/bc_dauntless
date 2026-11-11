@@ -610,8 +610,8 @@ def _stock_dotted_name(logical, leaf_name):
 
 class _SDKFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
-        stock_scripts = _stock_scripts()
         from engine import stock_scripts as _stock
+        stock_scripts = _stock.root()
         rel = fullname.replace(".", "/")
         if (_PROJECT_ROOT / (rel + ".py")).exists():
             return None
@@ -655,6 +655,7 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
         # a stock directory (e.g. Characters -> Bridge/Characters).
         if path:
             child = fullname.rpartition(".")[2]
+            _in_stock = False
             for _search_dir in path:
                 _p = Path(_search_dir)
                 if str(stock_scripts) not in str(_p):
@@ -663,6 +664,7 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                     _dir_rel = _p.relative_to(stock_scripts).as_posix()
                 except ValueError:
                     continue
+                _in_stock = True
                 _logical = child if _dir_rel == "." else f"{_dir_rel}/{child}"
                 _sf = _stock.find(_logical)
                 _qual = (_sf.rel if _sf is not None else _logical).replace("/", ".")
@@ -684,6 +686,14 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                 if _sf.is_package:
                     spec.submodule_search_locations = [str(_sf.path.parent)]
                 return spec
+            # Nothing listed and nothing modded under a stock folder: stop
+            # here. Returning None would let Python's own PathFinder search
+            # that __path__ and load a stray .py as plain Python 3 (decision
+            # 6: only manifest-listed stock modules load from the install).
+            # name= lets `from Pkg import attr` treat it as "no submodule".
+            if _in_stock:
+                raise ModuleNotFoundError(
+                    f"No module named {fullname!r}", name=fullname)
         # Python 1.5 implicit relative import fallback: BC engine added each
         # package directory to sys.path, so bare `import X` inside Bridge/ found
         # Bridge/X. Search the manifest (never the disk) for the leaf name.
