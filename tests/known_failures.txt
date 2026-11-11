@@ -41,7 +41,6 @@
 # nothing should skip. The 74 formerly listed here hard-coded <project>/game.)
 
 # --- C++ (ctest) OPTIONAL-MOD SKIPS ---------------------------------------------
-# CGSovereign is a mod overlay, not stock SDK content; the mod lives only on
-# machines that installed it. Legitimate to skip while that path is absent
-# under the resolved mods root -- see the format note above.
-optional-mod:ctest:ModelBuildRealAssets.CGSovereignBussardFlipIsWiredWithAllSixteenFrames CGSovereign/data/Models/Ships/Sovereign/Sovereign.nif
+# (none — the one entry, CGSovereign's bussard flip, was replaced by
+# ModelBuildRealAssets.AnimateTestCubeFlipIsWiredWithAllFourFrames, which
+# loads a committed GPL fixture and never skips.)
