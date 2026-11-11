@@ -30,6 +30,7 @@ def test_game_root_requires_scripts(tmp_path):
     v = paths.validate_game_root(tmp_path)
     assert not v.ok
     assert v.missing == ("scripts/MissionLib.pyc",)
+    assert v.hint is not None and "scripts/MissionLib.pyc" in v.hint
 
 
 def test_the_scripts_marker_matches_case_insensitively(tmp_path):

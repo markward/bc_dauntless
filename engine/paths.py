@@ -121,6 +121,14 @@ def _hint_for(root: Path, kind: str, missing: tuple[str, ...]) -> Optional[str]:
         m = missing[0]
         return f"found '{spellings[m]}', expected '{m}' — this volume is case-sensitive"
 
+    # A content-only copy: every data marker is there, the scripts are not.
+    # The old validator accepted these, so it is the likeliest upgrade case;
+    # name the missing file (the first-run row shows only the hint).
+    scripts_only = tuple(m for m in missing if m in _CASE_BLIND_MARKERS)
+    if missing and scripts_only == missing:
+        return (f"No Bridge Commander scripts here: {missing[0]} is missing. "
+                "Pick the full game folder.")
+
     # The parent was picked: this folder CONTAINS a valid game/.
     child = root / kind
     if child.is_dir() and _markers_ok(child, _MARKERS[kind]):

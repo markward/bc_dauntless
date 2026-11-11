@@ -156,6 +156,22 @@ def test_a_broken_install_is_rejected_naming_the_file(broken_install):
     assert panel.resolution.game is None
 
 
+def test_a_folder_with_no_scripts_is_rejected_naming_the_file(tmp_path):
+    """A content-only copy (data but no scripts folder) was accepted before
+    stock scripts came from the install; it is the likeliest upgrade case,
+    so the row must say what is missing, not just "not an install"."""
+    data_only = tmp_path / "content-only"
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
+        (data_only / rel).mkdir(parents=True, exist_ok=True)
+    panel = _panel(RecordingPicker([str(data_only)]))
+    panel.dispatch_event("browse:game")
+    payload = _payload(panel)
+    row = payload["rows"][0]
+    assert row["state"] == "bad"
+    assert "scripts/MissionLib.pyc" in row["hint"]
+    assert payload["can_continue"] is False
+
+
 def test_a_root_broken_at_boot_opens_with_the_checks_hint(broken_install):
     """host_loop hands the screen a Resolution its boot check unresolved:
     the row opens showing why, not a blank "Not set"."""
