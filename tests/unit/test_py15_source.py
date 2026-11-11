@@ -64,6 +64,45 @@ def test_numeric_literals(src, want):
 
 
 @pytest.mark.parametrize("src, want", [
+    # A plain hex/octal literal is a 32-bit C long in 1.5.
+    ("x = 0xFFFFFFFF", -1),
+    ("x = 0x80000000", -2147483648),
+    ("x = 0x7fffffff", 2147483647),
+    ("x = 2 * 0xFFFFFFFF", -2),
+    ("x = 037777777777", -1),
+    # A long literal is not wrapped.
+    ("x = 0xFFFFFFFFL", 0xFFFFFFFF),
+])
+def test_32_bit_hex_and_octal_literals(src, want):
+    assert _run(src)["x"] == want
+
+
+def test_a_cp1252_file_reads_as_cp1252(tmp_path):
+    path = tmp_path / "credits.py"
+    path.write_bytes(b"s = 'Si\xf4n'\r\nt = '\x84'\r\n")
+    ns = {}
+    exec(compile(source.fix_source(source.read_source(path)), "<t>", "exec"), ns)
+    assert (ns["s"], ns["t"]) == ("Siôn", "„")
+
+
+def test_a_utf8_file_reads_as_utf8(tmp_path):
+    path = tmp_path / "modern.py"
+    path.write_bytes("s = 'a — b'\n".encode("utf-8"))
+    ns = {}
+    exec(compile(source.fix_source(source.read_source(path)), "<t>", "exec"), ns)
+    assert ns["s"] == "a — b"
+
+
+def test_a_backslash_continuation_survives_crlf():
+    src = "x = 1 + \\\r\n    2\r\nprint x\r\n"
+    ns = _run(src)
+    assert ns["x"] == 3 and ns["_printed"] == [((3,), {})]
+
+
+@pytest.mark.parametrize("src, want", [
+    # An escaped byte means the same character as the raw byte would.
+    (r"s = '\x84\xf4'", "„ô"),
+    (r"s = '\204'", "„"),
     # \N, \u and \U are not escapes in Python 1.5: kept literally.
     (r"s = 'scripts\Custom\NanoFXv2'", "scripts\\Custom\\NanoFXv2"),
     (r"s = 'a\u0041'", "a\\u0041"),

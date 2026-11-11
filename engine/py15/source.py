@@ -10,11 +10,14 @@ string or a comment. The rules, each one Python 1.5's own:
 
 * **Indentation**: a tab in leading whitespace advances to the next multiple
   of 8 columns (1.5's tokenizer). Tabs elsewhere, in strings above all, stay.
-* **Numbers**: the long suffix ``L`` is dropped; ``0755`` is octal.
+* **Text**: a file is UTF-8 if it is valid UTF-8, else cp1252 (``decode_text``).
+* **Numbers**: the long suffix ``L`` is dropped; ``0755`` is octal; a plain
+  hex or octal literal from 2**31 to 2**32 is negative (a 32-bit C long).
 * **String escapes** (non-raw only): ``\\N``, ``\\u`` and ``\\U`` are not
   escapes in 1.5 and stay as written; ``\\x`` takes every following hex digit
-  and an octal escape any value, both keeping the low byte; ``\\x`` with no
-  hex digit stays as written.
+  and an octal escape any value, both keeping the low byte, which means the
+  character ``decode_text`` gives that byte; ``\\x`` with no hex digit stays
+  as written.
 * **Operators**: ``<>`` is ``!=``, backticks are ``repr()``, ``.has_key(`` is
   ``.__contains__(``.
 * **Statements**, each found at statement level -- after a ``;`` or a
@@ -29,7 +32,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["fix_source", "fix_syntax"]
+__all__ = ["decode_text", "fix_source", "fix_syntax", "read_source"]
 
 _CODE, _STRING, _COMMENT, _NEWLINE = "code", "string", "comment", "newline"
 
@@ -37,9 +40,11 @@ _COMPOUND = frozenset({"if", "elif", "else", "while", "for", "try", "except",
                        "finally", "def", "class"})
 _OPEN, _CLOSE = "([{", ")]}"
 
-_LONG = re.compile(r"(?<![\w.])((?:0[xX][0-9a-fA-F]+)|\d+)[lL]\b")
-# Not after a float exponent's sign (`7.7e-05`): that `05` is the exponent.
-_OCTAL = re.compile(r"(?<![\w.])(?<![0-9.][eE][+-])0([0-7]+)\b")
+# An integer literal: hex, octal (a leading 0) or decimal, with 1.5's optional
+# long suffix. Not after a float exponent's sign (`7.7e-05`: that `05` is the
+# exponent), and not the integer part of a float or imaginary literal.
+_INT = re.compile(r"(?<![\w.])(?<![0-9.][eE][+-])"
+                  r"(0[xX][0-9a-fA-F]+|0[0-7]+|\d+)([lL]?)\b(?![.eEjJ])")
 _HAS_KEY = re.compile(r"\.has_key\s*\(")
 _HEX = "0123456789abcdefABCDEF"
 
@@ -115,13 +120,52 @@ def _scan(text):
 
 # -- token-level rewrites ------------------------------------------------------
 
+def _int_literal(m):
+    digits, is_long = m.group(1), bool(m.group(2))
+    if digits[:2] in ("0x", "0X"):
+        value, text = int(digits, 16), digits
+    elif len(digits) > 1 and digits[0] == "0":
+        value, text = int(digits, 8), "0o" + digits[1:]
+    else:
+        return digits
+    # A plain (not long) hex or octal literal is a 32-bit C long in 1.5:
+    # 0xFFFFFFFF is -1. Parenthesised so it stays one operand anywhere.
+    if not is_long and 2 ** 31 <= value < 2 ** 32:
+        return "(-%d)" % (2 ** 32 - value)
+    return text if value else "0"
+
+
 def _fix_code(text):
     text = text.replace("<>", "!=")
     text = _HAS_KEY.sub(".__contains__(", text)
-    text = _LONG.sub(r"\1", text)
-    return _OCTAL.sub(
-        lambda m: "0o" + m.group(1) if m.group(1).strip("0") else m.group(0),
-        text)
+    return _INT.sub(_int_literal, text)
+
+
+def _bc_char(byte):
+    """The character a 1.5 string byte means: cp1252 (BC is a Windows game),
+    latin-1 for the five bytes cp1252 leaves undefined."""
+    try:
+        return bytes([byte]).decode("cp1252")
+    except UnicodeDecodeError:
+        return chr(byte)
+
+
+def decode_text(raw: bytes) -> str:
+    """Python 1.5 source or string bytes as text: UTF-8 when the bytes are
+    valid UTF-8 (files written by modern editors), else cp1252 byte by byte.
+    The SDK loaders read files with it and the lifter decodes string
+    constants with it, so a byte means the same character on every path."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "".join(_bc_char(b) for b in raw)
+
+
+def _escape_char(value):
+    """A string escape's byte value as a Python 3 escape for the same
+    character decode_text gives that byte."""
+    ch = _bc_char(value) if value >= 0x80 else chr(value)
+    return "\\x%02x" % value if ord(ch) < 0x100 else "\\u%04x" % ord(ch)
 
 
 def _fix_escapes(literal):
@@ -144,13 +188,13 @@ def _fix_escapes(literal):
             if j == i + 2:
                 out.append("\\\\x")
             else:
-                out.append("\\x%02x" % (int(literal[i + 2:j], 16) & 0xFF))
+                out.append(_escape_char(int(literal[i + 2:j], 16) & 0xFF))
             i = j
         elif nxt in "01234567":
             j = i + 1
             while j < n and j < i + 4 and literal[j] in "01234567":
                 j += 1
-            out.append("\\x%02x" % (int(literal[i + 1:j], 8) & 0xFF))
+            out.append(_escape_char(int(literal[i + 1:j], 8) & 0xFF))
             i = j
         else:
             out.append(literal[i:i + 2])
@@ -390,4 +434,11 @@ def fix_syntax(text: str) -> str:
 
 def fix_source(text: str) -> str:
     """What the SDK loaders parse: 1.5 indentation, then ``fix_syntax``."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     return fix_syntax(_expand_indent_tabs(text))
+
+
+def read_source(path) -> str:
+    """A 1.5 source file's text (``decode_text``), ready for ``fix_source``."""
+    with open(path, "rb") as f:
+        return decode_text(f.read())

@@ -10,7 +10,21 @@ normalisation, each item being something 1.5 bytecode cannot carry:
   * bare string statements other than a docstring (compiled away);
   * a function's trailing `return` / `return None` (the implicit return);
   * `global` names a function never assigns (no bytecode trace); the
-    remaining names merge into one sorted declaration after the docstring.
+    remaining names merge into one sorted declaration after the docstring,
+    wherever in the function the source put them (bytecode records no
+    position, and the SDK loader's _MoveGlobalsToTop hoists them anyway);
+  * a `BoolOp` as the LAST operand of the same operator is flattened:
+    `a and (b and c)` compiles to the very bytecode `a and b and c` does;
+  * a module- or class-level `global` (compiles to nothing);
+  * float constants compare at 12 significant digits: 1.5's marshal writes a
+    float as "%.12g" text, so the .pyc holds the value BC actually ran with
+    and the SDK source may carry more digits than that.
+
+Each item applies wherever it occurs, at any depth.
+
+_SOURCE_DIFFERS lists stock modules whose retail .pyc was compiled from a
+DIFFERENT version of the file than the SDK ships, each with the evidence.
+They must still lift; only the comparison is skipped.
 
 Never widen that list to make a mismatch go away: a mismatch is a lifter bug
 until proven otherwise.
@@ -26,9 +40,16 @@ import pytest
 
 from engine import paths, py15
 from tests.helpers.bc_assets import require_game_dir
-from engine.py15.source import fix_source
+from engine.py15.source import fix_source, read_source
 
-ACCEPTED_FLOOR = 514
+ACCEPTED_FLOOR = 1201
+
+_SOURCE_DIFFERS = {
+    # The .pyc reads two fields per record (frame, value) where the .py
+    # reads four, and lacks the .py's "Show Call Graph" button and its
+    # FrameChanged sorting: an older TimingGraph.py. A developer tool.
+    "TimingGraph.py": "retail .pyc predates the SDK source",
+}
 
 
 def _is_doc(stmt):
@@ -36,40 +57,98 @@ def _is_doc(stmt):
             and isinstance(stmt.value.value, str))
 
 
-def _norm_body(body, is_function):
-    body = [s for s in body if not isinstance(s, ast.Pass)]
-    doc = []
-    if body and _is_doc(body[0]):
-        doc, body = [body[0]], body[1:]
-    body = [s for s in body if not _is_doc(s)]
-    if is_function:
+_DOC_OWNERS = (ast.Module, ast.FunctionDef, ast.ClassDef)
+
+
+class _FlattenBoolOps(ast.NodeTransformer):
+    def visit_BoolOp(self, node):
+        self.generic_visit(node)
+        last = node.values[-1]
+        if isinstance(last, ast.BoolOp) and type(last.op) is type(node.op):
+            node.values[-1:] = last.values
+        return node
+
+
+class _StripBlocks(ast.NodeTransformer):
+    """`pass` and non-docstring bare strings, in every block at any depth.
+    A body left empty gets one `pass` back; an else/finally left empty goes."""
+
+    def generic_visit(self, node):
+        super().generic_visit(node)
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list):
+                continue
+            keep_doc = (field == "body" and isinstance(node, _DOC_OWNERS)
+                        and block and _is_doc(block[0]))
+            kept = [stmt for i, stmt in enumerate(block)
+                    if not isinstance(stmt, ast.Pass)
+                    and not (_is_doc(stmt) and not (keep_doc and i == 0))]
+            if not kept and field == "body" and not isinstance(node, ast.Module):
+                kept = [ast.Pass()]
+            setattr(node, field, kept)
+        return node
+
+
+class _RoundFloats(ast.NodeTransformer):
+    def visit_Constant(self, node):
+        if isinstance(node.value, float):
+            node.value = float("%.12g" % node.value)
+        return node
+
+
+class _DropAllGlobals(ast.NodeTransformer):
+    def visit_Global(self, node):
+        return None
+
+
+class _DropGlobals(ast.NodeTransformer):
+    """Remove `global` statements at any depth inside one function (its
+    nested functions keep theirs)."""
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def visit_FunctionDef(self, node):
+        return self.generic_visit(node) if node is self.fn else node
+
+    def visit_Global(self, node):
+        return None
+
+
+def _normalise(tree):
+    tree = _FlattenBoolOps().visit(tree)
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        inner = {n for f in ast.walk(fn) if isinstance(f, ast.FunctionDef)
+                 and f is not fn for n in ast.walk(f)}
+        own = [n for n in ast.walk(fn) if n not in inner]
+        stored = {n.id for n in own
+                  if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        declared = sorted({g for n in own if isinstance(n, ast.Global)
+                           for g in n.names} & stored)
+        _DropGlobals(fn).visit(fn)
+        fn.body = fn.body or [ast.Pass()]
+        fn._declared = declared
+    tree = _DropAllGlobals().visit(tree)      # module- and class-level ones
+    tree = _RoundFloats().visit(tree)
+    tree = _StripBlocks().visit(tree)
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        body = [s for s in fn.body if not isinstance(s, ast.Pass)]
         while body and isinstance(body[-1], ast.Return) and (
                 body[-1].value is None
                 or (isinstance(body[-1].value, ast.Constant)
                     and body[-1].value.value is None)):
             body.pop()
-    return doc + body
-
-
-def _normalise(tree):
-    tree.body = _norm_body(tree.body, False)
-    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
-        stored = {n.id for n in ast.walk(fn)
-                  if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
-        declared = sorted({g for n in ast.walk(fn) if isinstance(n, ast.Global)
-                           for g in n.names} & stored)
-        body = _norm_body([s for s in fn.body if not isinstance(s, ast.Global)],
-                          True)
-        if declared:
+        if fn._declared:
             body.insert(1 if body and _is_doc(body[0]) else 0,
-                        ast.Global(declared))
+                        ast.Global(fn._declared))
         fn.body = body or [ast.Pass()]
     return ast.dump(tree)
 
 
 def _sdk_tree(path):
     # Exactly what the SDK loader does to a .py before its AST transforms.
-    source = path.read_text(encoding="utf-8", errors="replace")
+    source = read_source(path)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return ast.parse(fix_source(source), filename=str(path))
@@ -90,6 +169,8 @@ def oracle():
             continue
         compile(lifted, str(pyc), "exec")
         accepted.append(rel.as_posix())
+        if rel.as_posix() in _SOURCE_DIFFERS:
+            continue
         if _normalise(lifted) != _normalise(_sdk_tree(sdk / rel)):
             wrong.append(rel.as_posix())
     return game_scripts, accepted, wrong

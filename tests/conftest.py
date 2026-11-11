@@ -85,6 +85,7 @@ if sys.platform == "win32":
 # SDK loaders (this file and its twin) and the lifter's stock oracle.
 # Spec: docs/superpowers/specs/2026-11-11-legacy-script-parsing-design.md
 from engine.py15.source import fix_source as _fix_source  # noqa: E402
+from engine.py15.source import read_source as _read_source  # noqa: E402
 from engine.py15.source import fix_syntax as _fix_py2_syntax  # noqa: E402,F401
 
 
@@ -473,9 +474,7 @@ def _module_tree(path, fullname):
     if str(path).lower().endswith(".pyc"):
         from engine import py15
         return py15.load_tree(path, fullname)
-    with open(path, encoding="utf-8", errors="replace") as f:
-        source = f.read()
-    source = _fix_source(source)
+    source = _fix_source(_read_source(path))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return ast.parse(source, filename=path)
