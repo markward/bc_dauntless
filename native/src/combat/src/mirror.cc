@@ -28,6 +28,7 @@ constexpr FieldInfo kInfo[] = {
     {"is_meta_nebula", Kind::Object, FieldType::I},
     {"_dead", Kind::Object, FieldType::I},
     {"_dying", Kind::Object, FieldType::I},
+    {"_hidden", Kind::Object, FieldType::I},
     {"_life_time", Kind::Object, FieldType::F},
     {"_containing_set", Kind::Object, FieldType::Ref},
     {"_radius", Kind::Object, FieldType::F},
@@ -448,6 +449,7 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::is_meta_nebula: return &r.is_meta_nebula;
         case Field::_dead: return &r._dead;
         case Field::_dying: return &r._dying;
+        case Field::_hidden: return &r._hidden;
         case Field::arriving: return &r.arriving;
         case Field::_hurtable: return &r._hurtable;
         case Field::dmg_ship: return &r.dmg_ship;

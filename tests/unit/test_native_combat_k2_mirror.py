@@ -427,3 +427,11 @@ def test_a_non_tuple_colour_is_unrepresentable(arena, bad):
     assert d["_length"].hex() == bank._length.hex()      # row not dropped
     bank._outer_shell_color = (0.5, 0.5, 0.5, 1.0)
     assert _hex(*_dump(bank)["_outer_shell_color"]) == _hex(0.5, 0.5, 0.5, 1.0)
+
+
+def test_hidden_is_mirrored(arena):
+    galaxy, _bop = arena
+    galaxy.SetHidden(1)
+    assert _dump(galaxy)["_hidden"] == 1
+    galaxy.SetHidden(0)
+    assert _dump(galaxy)["_hidden"] == 0
