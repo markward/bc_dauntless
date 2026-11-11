@@ -27,7 +27,7 @@ def test_root_ends_in_cache_structure_parts():
 def test_root_is_resolved_at_call_time_not_captured(monkeypatch, tmp_path):
     """Discriminator: if structure_parts_cache_root() (or anything it depends
     on) captured PROJECT_ROOT once at import -- the exact trap game_root() /
-    sdk_root() / game_asset() exist to avoid -- patching the underlying
+    game_root() / game_asset() exist to avoid -- patching the underlying
     source AFTER import and calling again would have no effect. Two calls
     with nothing changed in between would agree whether or not the value was
     memoized, so the discriminating step is patching PROJECT_ROOT and

@@ -3,13 +3,14 @@ import subprocess
 from pathlib import Path
 
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SCRIPT = PROJECT_ROOT / "tools" / "pick_simplest_mission.py"
 
 
 def test_script_runs_and_picks_a_mission():
-    if not _paths.sdk_scripts().is_dir():
+    if not dev_sdk.sdk_scripts().is_dir():
         import pytest
         pytest.skip("SDK not available")
     result = subprocess.run(

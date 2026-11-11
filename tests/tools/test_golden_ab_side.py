@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from tools import golden_ab_side as side
 
 
@@ -22,7 +23,7 @@ def test_child_env_points_at_resolved_roots(tmp_path):
     env = side.child_env({"KEEP": "1"}, tmp_path / "a")
     assert env["KEEP"] == "1"
     assert env[paths.ENV_VARS["game"]] == str(paths.game_root())  # paths-guard: ENV_VARS key
-    assert env[paths.ENV_VARS["sdk"]] == str(paths.sdk_root())  # paths-guard: ENV_VARS key
+    assert env["DAUNTLESS_SDK_DIR"] == str(dev_sdk.sdk_root())
     assert Path(env[paths.DATA_DIR_ENV]).is_dir()
     assert side.child_env({}, tmp_path / "b")[paths.DATA_DIR_ENV] \
         != env[paths.DATA_DIR_ENV]
@@ -94,7 +95,7 @@ def test_child_env_overrides_inherited_mods_dir(tmp_path):
 def test_inherited_dauntless_env_skips_what_the_tool_sets():
     base = {"DAUNTLESS_PASSIVE_STATE": "0", "PATH": "/bin",
             "DAUNTLESS_MODS_DIR": "/m", "DAUNTLESS_DATA_DIR": "/d",
-            paths.ENV_VARS["game"]: "/g", paths.ENV_VARS["sdk"]: "/s"}  # paths-guard: ENV_VARS key
+            paths.ENV_VARS["game"]: "/g", "DAUNTLESS_SDK_DIR": "/s"}  # paths-guard: ENV_VARS key
     assert side.inherited_dauntless_env(base) == ["DAUNTLESS_PASSIVE_STATE=0"]
     assert side.inherited_dauntless_env({"PATH": "/bin"}) == []
 

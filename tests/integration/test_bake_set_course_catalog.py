@@ -63,8 +63,9 @@ def test_create_menus_is_found_outside_the_canonical_system_module():
     from pathlib import Path
 
     from engine import paths as _paths
+    from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
-    sys_dir = _paths.sdk_scripts() / "Systems"
+    sys_dir = dev_sdk.sdk_scripts() / "Systems"
     off_canonical = []
     for d in sorted(p for p in sys_dir.iterdir() if p.is_dir()):
         holders = [f.stem for f in d.glob("*.py")

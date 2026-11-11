@@ -3,12 +3,13 @@ icon in shipdef_overrides.py exists. Skipped when no content is configured."""
 import pytest
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from engine.foundation import shipdef_overrides
 
 
 def _stems(rel_dir, pattern):
     try:
-        d = paths.sdk_scripts() / rel_dir if pattern == "*.py" else paths.game_asset(rel_dir)
+        d = dev_sdk.sdk_scripts() / rel_dir if pattern == "*.py" else paths.game_asset(rel_dir)
     except Exception:
         pytest.skip("no BC content configured")
     if not d.is_dir():

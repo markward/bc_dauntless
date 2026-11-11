@@ -11,9 +11,11 @@ import sys
 from pathlib import Path
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SDK_SCRIPTS = paths.sdk_scripts()
+def sdk_scripts_dir():
+    return dev_sdk.sdk_scripts()
 
 SPAWN_PATTERNS = [
     re.compile(r"\bCreateShip\b"),
@@ -24,7 +26,7 @@ SPAWN_PATTERNS = [
 
 def discover_missions():
     missions = []
-    for py_file in sorted(SDK_SCRIPTS.rglob("*.py")):
+    for py_file in sorted(sdk_scripts_dir().rglob("*.py")):
         if py_file.name == "__init__.py":
             continue
         try:
@@ -48,12 +50,12 @@ def main():
     if not missions:
         print("no missions found", file=sys.stderr)
         return 1
-    ranked = sorted((score(text), str(p.relative_to(SDK_SCRIPTS)), p, text) for p, text in missions)
+    ranked = sorted((score(text), str(p.relative_to(sdk_scripts_dir())), p, text) for p, text in missions)
     print("ranked by simplicity (lower = simpler):")
     for s, rel, _, _ in ranked[:5]:
         print(f"  {s:5d}  {rel}")
     s, rel, p, _ = ranked[0]
-    rel_module = ".".join(p.relative_to(SDK_SCRIPTS).with_suffix("").parts)
+    rel_module = ".".join(p.relative_to(sdk_scripts_dir()).with_suffix("").parts)
     print(f"winner: {rel_module} (score {s}, path {rel})")
     return 0
 

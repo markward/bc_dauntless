@@ -10,6 +10,7 @@ import re
 import App
 import engine.appc.input as appc_input
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
 _BASES = (
     [chr(c) for c in range(ord("A"), ord("Z") + 1)]
@@ -59,7 +60,7 @@ def test_family_codes_distinct_and_disjoint_from_base_band():
 
 
 def test_every_wc_name_the_sdk_references_is_defined():
-    sdk = _paths.sdk_scripts()
+    sdk = dev_sdk.sdk_scripts()
     src = ""
     for fname in ("KeyConfig.py", "DefaultKeyboardBinding.py"):
         src += (sdk / fname).read_text(errors="replace")

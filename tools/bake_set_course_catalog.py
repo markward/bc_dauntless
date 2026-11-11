@@ -24,8 +24,10 @@ if _BUILD_PYTHON.is_dir() and str(_BUILD_PYTHON) not in sys.path:
     sys.path.insert(0, str(_BUILD_PYTHON))
 
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
-SYS_DIR = _paths.sdk_scripts() / "Systems"
+def sys_dir():
+    return dev_sdk.sdk_scripts() / "Systems"
 OUT = ROOT / "engine" / "appc" / "sector_model.json"
 
 
@@ -63,11 +65,11 @@ def build_catalog():
     # Scan every module in the directory instead, and call CreateMenus on the
     # first holder, preferring the canonical file. First-only, not all: a
     # system defining it twice would otherwise register duplicate menu nodes.
-    names = sorted(d for d in os.listdir(SYS_DIR) if (SYS_DIR / d).is_dir())
+    names = sorted(d for d in os.listdir(sys_dir()) if (sys_dir() / d).is_dir())
     failed = {}
     for n in names:
         holders = sorted(
-            (f.stem for f in (SYS_DIR / n).glob("*.py")
+            (f.stem for f in (sys_dir() / n).glob("*.py")
              if f.stem != "__init__"
              and re.search(r"^def CreateMenus", f.read_text(errors="ignore"),
                            re.M)),

@@ -41,7 +41,8 @@ def test_quickbattle_really_does_wrap_its_tree_in_avoid_obstacles():
     asserted in a comment. `AI/Compound/BasicAttack.py` installs no
     AvoidObstacles of its own; QuickBattleAI adds one around it."""
     from engine import paths as _paths
-    root = _paths.sdk_scripts()
+    from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
+    root = dev_sdk.sdk_scripts()
     qb = (root / "QuickBattle" / "QuickBattleAI.py").read_text(encoding="utf-8")
     assert "AI.Preprocessors.AvoidObstacles()" in qb
     assert 'PreprocessingAI_Create(pShip, "AvoidObstacles")' in qb

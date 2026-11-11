@@ -19,13 +19,19 @@ class ChildError(Exception):
         self.tail = tail
 
 
+SDK_ENV = "DAUNTLESS_SDK_DIR"
+
+
 def child_env(base_env: dict, data_dir) -> dict:
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
     from engine import paths
+    from tools import dev_sdk
     env = dict(base_env)
     env[paths.ENV_VARS["game"]] = str(paths.game_root())  # paths-guard: ENV_VARS key
-    env[paths.ENV_VARS["sdk"]] = str(paths.sdk_root())  # paths-guard: ENV_VARS key
+    # The BASE commit may predate the no-SDK-runtime change and still read it
+    # (spec 2026-11-11 decision 5), so hand it the developer's SDK root.
+    env[SDK_ENV] = str(dev_sdk.sdk_root())
     env[paths.DATA_DIR_ENV] = str(data_dir)
     mods = Path(data_dir) / "no_mods"
     mods.mkdir(parents=True, exist_ok=True)
@@ -38,7 +44,7 @@ def inherited_dauntless_env(base_env: dict) -> list:
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
     from engine import paths
-    own = {paths.ENV_VARS["game"], paths.ENV_VARS["sdk"],  # paths-guard: ENV_VARS key
+    own = {paths.ENV_VARS["game"], SDK_ENV,  # paths-guard: ENV_VARS key
            paths.DATA_DIR_ENV, MODS_DIR_ENV}
     return ["%s=%s" % (k, v) for k, v in sorted(base_env.items())
             if k.startswith("DAUNTLESS_") and k not in own]

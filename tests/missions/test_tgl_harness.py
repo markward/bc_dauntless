@@ -40,6 +40,7 @@ def test_discover_skips_missing_root(tmp_path, monkeypatch):
 
 
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from engine.missions.tgl_reader import TGLParseError
 from tools.tgl_harness import classify
 
@@ -49,7 +50,7 @@ from tools.tgl_harness import classify
 # routed through engine.paths. SDK_TGL_ROOT, below, IS an asset root (used to
 # require a real on-disk TGL) and goes through engine.paths accordingly.
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-SDK_TGL_ROOT = _paths.sdk_data() / "TGL"
+SDK_TGL_ROOT = dev_sdk.sdk_data() / "TGL"
 
 
 def test_classify_pass_returns_counts():

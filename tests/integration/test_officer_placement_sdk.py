@@ -7,11 +7,12 @@ import pytest
 
 import App
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from engine.core.game import Game, Episode, Mission, _set_current_game
 from engine.appc.bridge_placement import capture_placement
 from engine.appc.characters import CharacterClass
 
-SDK_LOADBRIDGE = _paths.sdk_scripts() / "LoadBridge.py"
+SDK_LOADBRIDGE = dev_sdk.sdk_scripts() / "LoadBridge.py"
 
 
 def _fresh_world():

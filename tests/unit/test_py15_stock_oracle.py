@@ -39,6 +39,7 @@ import warnings
 import pytest
 
 from engine import paths, py15
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from tests.helpers.bc_assets import require_game_dir
 from engine.py15.source import fix_source, read_source
 
@@ -157,7 +158,7 @@ def _sdk_tree(path):
 @pytest.fixture(scope="module")
 def oracle():
     game_scripts = require_game_dir("scripts")
-    sdk = paths.sdk_scripts()
+    sdk = dev_sdk.sdk_scripts()
     accepted, wrong = [], []
     for pyc in sorted(game_scripts.rglob("*.pyc")):
         rel = pyc.relative_to(game_scripts).with_suffix(".py")

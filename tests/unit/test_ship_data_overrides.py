@@ -292,7 +292,7 @@ def test_sovereign_sdk_hardpoint_gets_baked_glow_and_skin_shield():
 
 
 def test_every_override_leaf_has_a_hardpoint_file():
-    from tools.bake_impulse_glow import ROOT_HARDPOINTS, SDK_HARDPOINTS
+    from tools.bake_impulse_glow import ROOT_HARDPOINTS, sdk_hardpoints
     for leaf in hardpoint_overrides.OVERRIDES:
-        assert (SDK_HARDPOINTS / f"{leaf}.py").exists() \
+        assert (sdk_hardpoints() / f"{leaf}.py").exists() \
             or (ROOT_HARDPOINTS / f"{leaf}.py").exists(), leaf

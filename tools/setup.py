@@ -26,10 +26,12 @@ import struct
 import sys
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
 PROJECT_ROOT = pathlib.Path(__file__).parent.parent
 GAME_SCRIPTS = paths.game_asset("scripts")
-SDK_APP = paths.sdk_scripts() / "App.py"
+def sdk_app():
+    return dev_sdk.sdk_scripts() / "App.py"
 SHIM_SNIPPET = PROJECT_ROOT / "tools" / "appc_logger.py"
 POWER_SNIPPET = PROJECT_ROOT / "tools" / "appc_power_logger.py"
 _snippet_path = SHIM_SNIPPET  # overridden by --power in main()
@@ -44,7 +46,7 @@ def build_combined() -> bytes:
     snippet = _snippet_path.read_text(encoding="utf-8")
     snippet = snippet.replace('"LOG_PATH"', '"%s"' % log_path)
     snippet = snippet.replace('"ERR_PATH"', '"%s"' % err_path)
-    app_source = SDK_APP.read_bytes()
+    app_source = sdk_app().read_bytes()
     return app_source + b"\n\n# === instrumentation ===\n" + snippet.encode("ascii")
 
 
@@ -81,8 +83,8 @@ def main() -> None:
     if not GAME_SCRIPTS.exists():
         print(f"scripts/ not found under {paths.game_root()} - set --game-dir or settings.json [paths].game")
         sys.exit(1)
-    if not SDK_APP.exists():
-        print(f"Build/scripts/App.py not found under {paths.sdk_root()} - set --sdk-dir or settings.json [paths].sdk")
+    if not sdk_app().exists():
+        print(f"Build/scripts/App.py not found under {dev_sdk.sdk_root()} - set --sdk-dir or settings.json [paths].sdk")
         sys.exit(1)
 
     # Remove stale files from earlier approaches.

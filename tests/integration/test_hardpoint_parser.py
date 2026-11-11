@@ -2,10 +2,11 @@
 import pytest
 
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from tests.integration._hardpoint_parser import extract_setters
 
 
-SDK_HARDPOINTS = _paths.sdk_scripts() / "ships" / "Hardpoints"
+SDK_HARDPOINTS = dev_sdk.sdk_scripts() / "ships" / "Hardpoints"
 
 
 def test_extract_galaxy_ship_mass():

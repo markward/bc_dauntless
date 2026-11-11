@@ -212,8 +212,9 @@ def test_select_targets_sdk_body_cannot_return_ps_done():
     import re
 
     from engine import paths as _paths
+    from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
-    src = (_paths.sdk_scripts() / "AI" / "Preprocessors.py").read_text(encoding="utf-8")
+    src = (dev_sdk.sdk_scripts() / "AI" / "Preprocessors.py").read_text(encoding="utf-8")
     # Slice the SelectTarget class body out of the SDK source (the SDK modules
     # are loaded through a custom finder, so inspect.getsource can't see them).
     body = re.search(r"^class SelectTarget:\n(.*?)^class ", src, re.S | re.M)

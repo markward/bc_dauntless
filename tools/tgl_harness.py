@@ -20,11 +20,15 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
-ROOTS: list[Path] = [
-    paths.game_asset("data/TGL"),
-    paths.sdk_data() / "TGL",
-]
+ROOTS: list[Path] | None = None  # tests override; None = resolve at use
+
+
+def _roots() -> list[Path]:
+    if ROOTS is not None:
+        return ROOTS
+    return [paths.game_asset("data/TGL"), dev_sdk.sdk_data() / "TGL"]
 
 
 def discover_tgl_files() -> list[Path]:
@@ -34,7 +38,7 @@ def discover_tgl_files() -> list[Path]:
     install and may not be configured in every checkout.
     """
     found: list[Path] = []
-    for root in ROOTS:
+    for root in _roots():
         if not root.is_dir():
             continue
         found.extend(

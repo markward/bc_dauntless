@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
-SDK_TGL_ROOT = _paths.sdk_data() / "TGL"
+SDK_TGL_ROOT = dev_sdk.sdk_data() / "TGL"
 GAME_TGL_ROOT = _paths.game_root() / "data" / "TGL"
 
 

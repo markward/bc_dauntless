@@ -31,9 +31,11 @@ import sys
 from pathlib import Path
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
 ROOT = Path(__file__).resolve().parents[1]
-SDK_SYSTEMS = paths.sdk_scripts() / "Systems"
+def sdk_systems():
+    return dev_sdk.sdk_scripts() / "Systems"
 OUT = ROOT / "engine" / "appc" / "sector_model.json"
 
 # A Sun_Create call with no texture arguments gets the engine's own default,
@@ -73,7 +75,7 @@ def collect():
     from engine.appc.sector_model import system_id_for_set
 
     out = {}
-    for d in sorted(SDK_SYSTEMS.iterdir()):
+    for d in sorted(sdk_systems().iterdir()):
         if not d.is_dir() or d.name.startswith("_"):
             continue
         texture = sun_texture_for(d)

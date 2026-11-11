@@ -39,14 +39,16 @@ sys.path.insert(0, str(PROJECT_ROOT / "build" / "python"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
-SDK_HARDPOINTS = _paths.sdk_scripts() / "ships" / "Hardpoints"
+def sdk_hardpoints():
+    return dev_sdk.sdk_scripts() / "ships" / "Hardpoints"
 
 
 def hardpoint_leaves() -> list[str]:
     """All hardpoint module leaf names, root shadows included, deduped."""
     leaves = {}
-    for d in (SDK_HARDPOINTS, ROOT_HARDPOINTS):
+    for d in (sdk_hardpoints(), ROOT_HARDPOINTS):
         if not d.is_dir():
             continue
         for f in sorted(d.glob("*.py")):

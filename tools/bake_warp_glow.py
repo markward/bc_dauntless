@@ -30,10 +30,12 @@ import sys
 from pathlib import Path
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OVERRIDES_PATH = PROJECT_ROOT / "engine" / "appc" / "hardpoint_overrides.py"
-SDK_HARDPOINTS = paths.sdk_scripts() / "ships" / "Hardpoints"
+def sdk_hardpoints():
+    return dev_sdk.sdk_scripts() / "ships" / "Hardpoints"
 
 # Not real ships: galaxy_dauntless_mods is the stock-BC validation copy.
 EXCLUDE = {"galaxy_dauntless_mods"}
@@ -47,7 +49,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 def hardpoint_leaves() -> list[str]:
     return sorted(
-        f.stem for f in SDK_HARDPOINTS.glob("*.py")
+        f.stem for f in sdk_hardpoints().glob("*.py")
         if f.stem != "__init__" and f.stem not in EXCLUDE
     )
 

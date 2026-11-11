@@ -10,6 +10,7 @@ import pytest
 
 import App
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from engine.appc.properties import ShieldProperty
 from tests.integration._hardpoint_parser import extract_setters
 
@@ -17,7 +18,7 @@ from tests.integration._hardpoint_parser import extract_setters
 # Test file, exempt from the resolve-at-use rule (engine/paths.py's docstring):
 # it runs to completion at collection time, well after conftest.py has already
 # resolved and configure()'d the session's roots.
-SDK_HARDPOINTS = _paths.sdk_scripts() / "ships" / "Hardpoints"
+SDK_HARDPOINTS = dev_sdk.sdk_scripts() / "ships" / "Hardpoints"
 
 
 # ── Per-ship expectations ────────────────────────────────────────────────────

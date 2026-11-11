@@ -179,9 +179,10 @@ def _bc_bound_wc_names():
     `DefaultKeyboardBinding.py`. Commented-out calls are not parsed (ast
     never sees them), matching what actually runs."""
     from engine import paths
+    from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
     try:
-        sdk = paths.sdk_scripts()
+        sdk = dev_sdk.sdk_scripts()
     except Exception:  # noqa: BLE001 - no BC install configured here
         import pytest
         pytest.skip("no BC install resolvable")

@@ -92,8 +92,10 @@ def recording() -> Iterator[list[Record]]:
         raise RuntimeError("write_audit.recording() is not reentrant")
     install_once()
     from engine import paths
+    from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
     root = str(paths.PROJECT_ROOT)
-    _frame_roots = (root + os.sep, str(paths.sdk_scripts()) + os.sep)
+    _frame_roots = (root + os.sep, str(paths.stock_scripts()) + os.sep,
+                    str(dev_sdk.sdk_scripts()) + os.sep)
     _frame_excludes = (_THIS_FILE, os.path.join(root, ".venv") + os.sep)
     records: list[Record] = []
     _records = records

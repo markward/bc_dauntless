@@ -10,10 +10,11 @@ import pytest
 
 import App
 from engine import paths as _paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from engine.core.game import _set_current_game
 from tests.helpers.fresh_world import _fresh_world  # noqa: F401 (re-exported)
 
-SDK_LOADBRIDGE = _paths.sdk_scripts() / "LoadBridge.py"
+SDK_LOADBRIDGE = dev_sdk.sdk_scripts() / "LoadBridge.py"
 
 
 def _sdk_loader(path):

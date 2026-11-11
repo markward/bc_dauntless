@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from engine import paths
+from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from engine.systems import folds
 
 _CREATE_PLACEMENT = re.compile(r'App\.(\w+)_Create\("([^"]+)",\s*("([^"]+)"|\w+)')
@@ -96,11 +97,11 @@ class SurveyedSystem:
 
 
 def _systems_dir() -> Path:
-    return paths.sdk_scripts() / "Systems"
+    return dev_sdk.sdk_scripts() / "Systems"
 
 
 def _missions_dir() -> Path:
-    return paths.sdk_scripts() / "Maelstrom"
+    return dev_sdk.sdk_scripts() / "Maelstrom"
 
 
 def _read(path: Path) -> str:
