@@ -123,6 +123,21 @@ def test_string_escapes_mean_what_they_meant_in_python_1_5(src, want):
     assert _run(src)["s"] == want
 
 
+@pytest.mark.parametrize("src, want", [
+    # A backslash before anything that is not an escape is a backslash, in
+    # 1.5 and in Python 3; the fixed source spells it out so Python 3 never
+    # warns (3.12+: SyntaxWarning) or, one day, refuses.
+    (r"s = 'scripts\Custom\Ships\d'", "scripts\\Custom\\Ships\\d"),
+    (r"s = 'a\ b\.c\%'", "a\\ b\\.c\\%"),
+    (r"s = '\q\N'", "\\q\\N"),
+])
+def test_a_backslash_that_is_not_an_escape_compiles_without_a_warning(src, want):
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _run(src)["s"] == want
+
+
 @pytest.mark.parametrize("src", [
     "s = '10L'", "s = 'mode 0755'", "s = 'a <> b'", "s = 'print x'",
     "s = '`x`'", "s = 'd.has_key(k)'",

@@ -26,7 +26,7 @@ One implementation, called by both SDK loaders (`tools/mission_harness.py` and `
 |---|---|
 | Indentation | a tab in leading whitespace advances to the next multiple of 8; tabs elsewhere (strings) are kept |
 | Numbers | `10L` / `0xffL` drop the long suffix; `0755` is octal |
-| String escapes (non-raw) | `\N`, `\u`, `\U` are not escapes in 1.5 and stay literal; `\x` takes every following hex digit and keeps the low byte; octal escapes keep the low byte; `\x` with no hex digit stays literal |
+| String escapes (non-raw) | `\N`, `\u`, `\U` are not escapes in 1.5 and stay literal; `\x` takes every following hex digit and keeps the low byte; octal escapes keep the low byte; `\x` with no hex digit stays literal; any other backslash that starts no escape (`'scripts\Custom'`) is written `\\`, the same string, so Python 3 never warns (3.12+ `SyntaxWarning`) — 98 such warnings across the corpora went to 0 with every AST unchanged |
 | Operators | `<>` → `!=`; backticks → `repr()`; `.has_key(` → `.__contains__(` |
 | Statements | `print`, `print >>f`, `raise X, v`, `exec c in g, l`, `except X, e:`: recognised at statement level, after `;` or a compound header's colon as well as at a line start, ending before a `;` or a comment |
 

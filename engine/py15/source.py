@@ -168,6 +168,11 @@ def _escape_char(value):
     return "\\x%02x" % value if ord(ch) < 0x100 else "\\u%04x" % ord(ch)
 
 
+# Escapes 1.5 and Python 3 both read the same way: kept as written. A
+# backslash before a newline is a line continuation inside a string.
+_SIMPLE_ESCAPES = frozenset("\\'\"abfnrtv\n")
+
+
 def _fix_escapes(literal):
     """A non-raw string literal with 1.5's escape meanings made explicit."""
     out, i, n = [], 0, len(literal)
@@ -196,9 +201,14 @@ def _fix_escapes(literal):
                 j += 1
             out.append(_escape_char(int(literal[i + 1:j], 8) & 0xFF))
             i = j
-        else:
+        elif nxt in _SIMPLE_ESCAPES:
             out.append(literal[i:i + 2])
             i += 2
+        else:
+            # Not an escape: the backslash is itself (1.5 and Python 3 agree).
+            # Spelled out, so Python 3 does not warn about '\C' in a path.
+            out.append("\\\\")
+            i += 1
     return "".join(out)
 
 
