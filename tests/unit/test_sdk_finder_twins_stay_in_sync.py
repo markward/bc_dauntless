@@ -13,7 +13,13 @@ file has module-level constants and the other resolves at use:
 
     tests/conftest.py         tools/mission_harness.py
     PROJECT_ROOT              _PROJECT_ROOT
-    SDK_SCRIPTS               sdk_scripts (= _sdk_scripts(), a local)
+    STOCK_SCRIPTS             stock_scripts (= _stock_scripts(), a local)
+
+Both load stock modules lifted from the install through engine.stock_scripts
+(spec 2026-11-11-no-sdk-runtime §4.2). The test loader's one extra -- the
+SDK's Custom/Tutorial sample served as a fixture (decision 8) -- is a
+registration in engine.stock_scripts made by tests/conftest.py at import,
+NOT a difference in the finder code: the bodies compared here stay equal.
 
 Comparison is on the parsed AST after normalising exactly those names, so
 comments, docstrings and line wrapping stay free to differ (they do) while
@@ -36,7 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # substring replacement over source text.
 _NAME_ALIASES = {
     "_PROJECT_ROOT": "PROJECT_ROOT",
-    "SDK_SCRIPTS": "sdk_scripts",
+    "STOCK_SCRIPTS": "stock_scripts",
 }
 
 
@@ -71,13 +77,13 @@ def _normalised_body(func_or_method):
     """A function's body as a normalised AST dump, docstring dropped."""
     tree = ast.parse(textwrap.dedent(inspect.getsource(func_or_method)))
     body = _strip_docstring(tree.body[0].body)
-    # mission_harness opens find_spec with `sdk_scripts = _sdk_scripts()`, the
-    # local standing in for conftest's module-level SDK_SCRIPTS constant. Drop
-    # it so the bodies line up; everything after it must match.
+    # mission_harness opens find_spec with `stock_scripts = _stock_scripts()`,
+    # the local standing in for conftest's module-level STOCK_SCRIPTS
+    # constant. Drop it so the bodies line up; everything after it must match.
     first = body[0] if body else None
     if (isinstance(first, ast.Assign)
             and isinstance(first.targets[0], ast.Name)
-            and first.targets[0].id == "sdk_scripts"):
+            and first.targets[0].id == "stock_scripts"):
         body = body[1:]
     return "\n".join(ast.dump(_NormaliseNames().visit(stmt)) for stmt in body)
 
@@ -93,17 +99,29 @@ def test_the_two_sdk_finder_find_spec_bodies_are_identical():
 
 
 @pytest.mark.parametrize("helper", ["_mods_may_override", "_mod_override_spec",
-                                    "_module_tree"])
+                                    "_module_tree", "_stock_dotted_name",
+                                    "_implicit_relative_fixer"])
 def test_the_shared_mod_helpers_are_identical_too(helper):
     """find_spec delegates to these, so drift here is drift there.
 
-    _stock_dotted_name is deliberately NOT compared: it is the one helper
-    whose bodies legitimately differ (the SDK_SCRIPTS constant vs an
-    _sdk_scripts() call), and a name normaliser cannot equate a constant
-    with a call. _implicit_relative_fixer differs for the same reason."""
+    _stock_dotted_name and _implicit_relative_fixer used to be exempt: they
+    read the SDK root (a constant in one file, a call in the other). They
+    now ask engine.stock_scripts instead, so they are compared too."""
     a = _normalised_body(getattr(_conftest_module(), helper))
     b = _normalised_body(getattr(harness, helper))
     assert a == b, f"{helper} has diverged between the two _SDKFinder copies"
+
+
+@pytest.mark.parametrize("name", ["_FixImplicitRelativeImport",
+                                  "_EmptyPackageLoader"])
+def test_the_shared_loader_classes_are_identical(name):
+    """The sibling rule and the synthetic-package loader, method by method."""
+    def methods(cls):
+        return {k: _normalised_body(v) for k, v in vars(cls).items()
+                if inspect.isfunction(v)}
+    a = methods(getattr(_conftest_module(), name))
+    b = methods(getattr(harness, name))
+    assert a == b, f"{name} has diverged between the two _SDKFinder copies"
 
 
 def test_the_comparison_would_actually_notice_a_divergence():
@@ -117,10 +135,10 @@ def test_the_comparison_would_actually_notice_a_divergence():
                          for s in _strip_docstring(tree.body[0].body))
 
     # A real logic difference is visible...
-    assert _dump("def f(self, n):\n    return SDK_SCRIPTS / n\n") != \
-        _dump("def f(self, n):\n    return SDK_SCRIPTS / n.lower()\n")
+    assert _dump("def f(self, n):\n    return STOCK_SCRIPTS / n\n") != \
+        _dump("def f(self, n):\n    return STOCK_SCRIPTS / n.lower()\n")
     # ...and the two spellings of the same root are not.
-    assert _dump("def f(self):\n    return SDK_SCRIPTS\n") == \
-        _dump("def f(self):\n    return sdk_scripts\n")
+    assert _dump("def f(self):\n    return STOCK_SCRIPTS\n") == \
+        _dump("def f(self):\n    return stock_scripts\n")
     assert _dump("def f(self):\n    return _PROJECT_ROOT\n") == \
         _dump("def f(self):\n    return PROJECT_ROOT\n")

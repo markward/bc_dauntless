@@ -1,4 +1,6 @@
 def test_discover_missions_finds_m1basic():
+    """M1Basic is the SDK tutorial sample, which the test loader serves as a
+    stock-scripts fixture (spec 2026-11-11-no-sdk-runtime decision 8)."""
     from tools.mission_harness import discover_missions
     missions = discover_missions()
     assert "Custom.Tutorial.Episode.M1Basic.M1Basic" in missions
@@ -7,7 +9,8 @@ def test_discover_missions_finds_m1basic():
 def test_discover_missions_count():
     from tools.mission_harness import discover_missions
     missions = discover_missions()
-    # SDK has 35 files with def Initialize(pMission) — sanity-check the range
+    # Retail lists 32 modules whose Initialize takes pMission first, and the
+    # tutorial fixture adds 3 -- sanity-check the range
     assert 30 <= len(missions) <= 40
 
 

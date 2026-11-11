@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from engine import mods, paths
+from engine import mods, stock_scripts
 
 
 def _touch(p: Path, body: str = "x = 1\n") -> None:
@@ -145,18 +145,17 @@ def test_a_mod_script_gets_python_1_5_implicit_relative_imports(
     assert module.LEVEL == 7
 
 
-def test_a_mod_script_finds_a_sibling_that_lives_in_the_stock_sdk(tmp_path):
-    """Sibling lookup spans BOTH directories.
+def test_a_mod_script_finds_a_sibling_that_lives_in_the_stock_install(tmp_path):
+    """Sibling lookup spans BOTH the mod's directory and the stock manifest.
 
     A mod that replaces one module of a stock package still relies on the
     stock siblings being there, so checking only the mod's own directory
     would leave those bare imports unrewritten."""
     import tests.conftest as conftest  # the finder under test lives here
 
-    sdk_scripts = paths.sdk_scripts()
-    # ships/ is a real stock SDK package with real siblings in it.
-    stock_sibling = next(p for p in sorted((sdk_scripts / "ships").glob("*.py"))
-                         if p.name != "__init__.py")
+    # ships/ is a real stock package with real listed siblings in it.
+    stock_sibling = next(sf for sf in stock_scripts.children("ships")
+                         if not sf.is_package)
     mod_file = tmp_path / "M" / "Scripts" / "ships" / "_dauntless_mod_leaf.py"
     _touch(mod_file)
 
@@ -164,24 +163,28 @@ def test_a_mod_script_finds_a_sibling_that_lives_in_the_stock_sdk(tmp_path):
         str(mod_file), "ships/_dauntless_mod_leaf.py")
 
     assert fixer._pkg == "ships"
-    # Both the mod's own directory and the stock package are searched.
+    # The mod's own directory is searched on disk, and stamped together
+    # with the stock package's folder.
+    assert fixer._mod_dirs == [mod_file.parent]
     assert mod_file.parent in fixer._sibling_dirs
-    assert sdk_scripts / "ships" in fixer._sibling_dirs
-    node = ast.parse(f"import {stock_sibling.stem}").body[0]
+    assert stock_scripts.find("ships").path.parent in fixer._sibling_dirs
+    leaf = stock_sibling.rel.rsplit("/", 1)[1]
+    node = ast.parse(f"import {leaf}").body[0]
     assert isinstance(fixer.visit_Import(node), ast.ImportFrom)
 
 
-def test_a_stock_sdk_file_is_transformed_exactly_as_before(tmp_path):
-    """The modless path is untouched: with no logical_rel given, the package
-    still comes from the on-disk path relative to the SDK scripts root."""
+def test_a_stock_file_takes_its_package_from_the_manifest(tmp_path):
+    """The modless path: with no logical_rel given, a stock .pyc's package
+    comes from its manifest entry, and its siblings from the manifest only
+    (no directory is probed on disk)."""
     import tests.conftest as conftest
 
-    sdk_scripts = paths.sdk_scripts()
-    fixer = conftest._implicit_relative_fixer(
-        str(sdk_scripts / "ships" / "Galaxy.py"), None)
+    galaxy = stock_scripts.find("ships/Galaxy").path
+    fixer = conftest._implicit_relative_fixer(str(galaxy), None)
     assert fixer._pkg == "ships"
     assert fixer._self_name == "Galaxy"
-    assert fixer._sibling_dirs == [sdk_scripts / "ships"]
+    assert fixer._sibling_dirs == [galaxy.parent]
+    assert fixer._mod_dirs == []
 
     # A file outside the SDK entirely still yields no rewrite at all.
     outside = conftest._implicit_relative_fixer(str(tmp_path / "loose.py"), None)
@@ -192,18 +195,18 @@ def test_a_stock_sdk_file_is_transformed_exactly_as_before(tmp_path):
 # --- The bare-name fallback must honour the index --------------------------
 
 def test_a_bare_import_does_not_defeat_a_mod_override(tmp_path, _pop_after_test):
-    """The bare-name rglob branch used to load the STOCK file and register it
+    """The bare-name fallback used to load the STOCK file and register it
     as sys.modules[<qualified>], so `import Fsteamr` arriving before the first
     `import ships.Fsteamr` permanently defeated the override -- and which one
     won depended on import order."""
     import tests.conftest as conftest
 
-    sdk_scripts = paths.sdk_scripts()
     # A real stock module reachable ONLY through the bare-name fallback: it
     # lives in a subdirectory, so the plain dotted lookup above misses it.
     leaf = "Amagon"
-    stock = sdk_scripts / "ships" / (leaf + ".py")
-    assert stock.exists(), "fixture assumes the stock SDK ships ships/Amagon.py"
+    listed = stock_scripts.find("ships/" + leaf)
+    assert listed is not None, "fixture assumes retail lists ships/Amagon.pyc"
+    stock = listed.path
 
     mod_file = tmp_path / "M" / "Scripts" / "ships" / (leaf + ".py")
     _touch(mod_file, "MARKER = 'from-the-mod'\n")
@@ -284,13 +287,13 @@ def test_the_gate_uses_python_3s_stdlib_names_not_python_2s():
     assert conftest._mods_may_override("copyreg") is False
 
 
-def test_the_stdlib_gate_leaves_the_stock_sdk_alone():
-    """The SDK ships its OWN string.py and copy_reg.py. How those resolve is
-    deliberately unchanged -- the gate is on MOD overrides only."""
+def test_the_stdlib_gate_leaves_the_stock_scripts_alone():
+    """Retail ships its OWN string and copy_reg modules. How those resolve
+    is deliberately unchanged -- the gate is on MOD overrides only."""
     import tests.conftest as conftest
 
-    sdk_scripts = paths.sdk_scripts()
-    assert (sdk_scripts / "string.py").exists(), "fixture assumes SDK string.py"
+    stock = stock_scripts.find("string")
+    assert stock is not None, "fixture assumes the retail string.pyc is listed"
     spec = conftest._SDKFinder().find_spec("string", None)
     assert spec is not None
-    assert Path(spec.origin).resolve() == (sdk_scripts / "string.py").resolve()
+    assert Path(spec.origin).resolve() == stock.path.resolve()

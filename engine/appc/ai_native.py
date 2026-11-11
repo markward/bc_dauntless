@@ -7,7 +7,8 @@ Python body only for an instance the SDK would have run UNCHANGED. "Stock"
 (the Global Constraints of the plan) means, and this module decides:
 
 * the SDK class of the instance is the SDK's class from the stock
-  ``AI/Preprocessors.py`` (``paths.sdk_scripts()``, resolved at use);
+  ``AI/Preprocessors`` module: the retail ``.pyc`` in the install, as listed
+  by ``engine.stock_scripts`` (resolved at use; the game never reads the SDK);
 * each method the native code replaces or would call is a function defined in
   that file (``__code__.co_filename`` and ``__qualname__``), or one of our own
   wrappers of such a function (``_dauntless_wraps``: the sensor gate's);
@@ -68,7 +69,7 @@ import sys
 import types
 import weakref
 
-from engine import paths
+from engine import stock_scripts
 
 KINDS = ("avoid", "select", "fire")
 
@@ -78,23 +79,24 @@ KINDS = ("avoid", "select", "fire")
 _force_python = False
 
 
-# ── The stock SDK file ───────────────────────────────────────────────────────
+# ── The stock file ───────────────────────────────────────────────────────────
 
 _GONE = object()
 _MAX_UNWRAP = 8
 
-#: [sdk_scripts() value it was resolved from, the Preprocessors.py path]
+#: [the stock AI/Preprocessors path it was resolved from, that path normalised]
 _sdk_file_cache = [None, None]
 #: co_filename -> whether it is the stock file (cleared when the root moves)
 _filename_verdicts: dict = {}
 
 
 def _stock_file() -> str:
-    root = str(paths.sdk_scripts())
-    if _sdk_file_cache[0] != root:
-        _sdk_file_cache[0] = root
-        _sdk_file_cache[1] = os.path.normcase(os.path.realpath(
-            os.path.join(root, "AI", "Preprocessors.py")))
+    sf = stock_scripts.find("AI/Preprocessors")
+    path = str(sf.path) if sf is not None else ""
+    if _sdk_file_cache[0] != path:
+        _sdk_file_cache[0] = path
+        _sdk_file_cache[1] = (os.path.normcase(os.path.realpath(path))
+                              if path else None)
         _filename_verdicts.clear()
     return _sdk_file_cache[1]
 
@@ -167,8 +169,8 @@ def _stock_candidate(mod, qualname):
 
 def is_stock_sdk_function(fn, qualname: str) -> bool:
     """`fn`, after unwrapping OUR ``_dauntless_wraps`` links, is a function of
-    the stock SDK ``AI/Preprocessors.py`` named `qualname`: its code is from
-    that file, its globals ARE the stock module's dict, it closes over
+    the stock ``AI/Preprocessors`` module named `qualname`: its code is from
+    that file (the install's lifted ``.pyc``), its globals ARE the stock module's dict, it closes over
     nothing and its defaults equal the module's own."""
     fn = _unwrap(fn)
     if fn is None or fn.__qualname__ != qualname or \

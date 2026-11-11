@@ -39,6 +39,10 @@ def _retail_pyc(rel=E1M1):
 
 @pytest.fixture(autouse=True)
 def _reset():
+    # tests/conftest.py registers the SDK tutorial as a fixture tree at
+    # import; these tests start from none, and its per-test reset puts it
+    # back afterwards.
+    stock_scripts.clear_fixture_trees()
     yield
     stock_scripts.configure(None, None)
     stock_scripts.clear_fixture_trees()

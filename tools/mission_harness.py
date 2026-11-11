@@ -1,7 +1,7 @@
 """
 Mission Initialize harness for open_stbc.
 
-Discovers all SDK mission scripts and attempts Initialize(pMission) on each,
+Discovers all stock mission scripts and attempts Initialize(pMission) on each,
 reporting a ranked summary of failures.
 
 Usage:
@@ -28,15 +28,17 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-def _sdk_scripts():
-    """The SDK's script root, resolved at USE.
+def _stock_scripts():
+    """The install's stock scripts root, resolved at USE.
 
-    Deliberately not a module-level constant: host_loop.py:3507 imports this
-    module at runtime, so a captured path would be stale the moment the
-    first-run picker changed it.
+    Stock modules are the retail ``.pyc`` in the player's install, lifted
+    (spec docs/superpowers/specs/2026-11-11-no-sdk-runtime-design.md); the
+    game never reads the SDK. Deliberately not a module-level constant:
+    host_loop imports this module at runtime, so a captured path would be
+    stale the moment the first-run picker changed it.
     """
-    from engine import paths
-    return paths.sdk_scripts()
+    from engine import stock_scripts as _stock
+    return _stock.root()
 
 # Python 1.5 source -> Python 3 source: ONE implementation shared by both
 # SDK loaders (this file and its twin) and the lifter's stock oracle.
@@ -47,27 +49,22 @@ from engine.py15.source import fix_syntax as _fix_py2_syntax  # noqa: E402,F401
 
 
 def discover_missions() -> list[str]:
-    """Return sorted list of dotted module names for all SDK mission scripts.
+    """Return sorted list of dotted module names for all stock mission scripts.
 
-    A mission script is any .py file (not __init__.py) that contains the
-    string 'def Initialize(pMission)'.  Episode-level scripts use
-    'def Initialize(pEpisode)' and are therefore excluded automatically.
+    A mission script is a listed stock module (or a test fixture) whose
+    top-level ``Initialize`` takes ``pMission`` first, read from its code
+    object without lifting. Episode-level scripts use
+    ``Initialize(pEpisode)`` and are therefore excluded automatically.
     """
-    sdk_scripts = _sdk_scripts()
+    from engine import stock_scripts as _stock
     missions = []
-    for py_file in sorted(sdk_scripts.rglob("*.py")):
-        if py_file.name == "__init__.py":
+    for sf in _stock.modules():
+        if sf.is_package:
             continue
-        try:
-            text = py_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if "def Initialize(pMission)" not in text:
-            continue
-        rel = py_file.relative_to(sdk_scripts)
-        module_name = ".".join(rel.with_suffix("").parts)
-        missions.append(module_name)
-    return missions
+        args = _stock.top_level_functions(sf).get("Initialize", ())
+        if args[:1] == ("pMission",):
+            missions.append(sf.rel.replace("/", "."))
+    return sorted(missions)
 
 
 # ── SDK compatibility machinery ───────────────────────────────────────────────
@@ -356,14 +353,28 @@ class _FixImplicitRelativeImport(ast.NodeTransformer):
     exactly as BC did, without touching sys.modules[<pkg>] (so dotted imports
     like ``import QuickBattle.QuickBattleEpisode`` still see the package).
 
+    A name is a sibling when a MOD directory (`mod_dirs`) holds `X.py` or
+    `X.pyc`, or the stock manifest lists the module `<pkg>/X` -- never by a
+    disk probe of the install, whose unlisted files are invisible.
+    `sibling_dirs` only stamps the compiled-code cache.
+
     Takes the package and the sibling-lookup directories EXPLICITLY; see
     _implicit_relative_fixer() for why it must not re-derive them from the
     on-disk path."""
 
-    def __init__(self, pkg, sibling_dirs, self_name):
+    def __init__(self, pkg, sibling_dirs, self_name, mod_dirs=()):
         self._pkg = pkg
         self._sibling_dirs = sibling_dirs
         self._self_name = self_name
+        self._mod_dirs = list(mod_dirs)
+
+    def _is_sibling(self, name):
+        from engine import stock_scripts as _stock
+        if any((d / (name + ext)).exists()
+               for d in self._mod_dirs for ext in (".py", ".pyc")):
+            return True
+        sf = _stock.find(self._pkg.replace(".", "/") + "/" + name)
+        return sf is not None and not sf.is_package
 
     def visit_Import(self, node):
         if not self._pkg or len(node.names) != 1:
@@ -372,7 +383,7 @@ class _FixImplicitRelativeImport(ast.NodeTransformer):
         name = alias.name
         if "." in name or alias.asname is not None or name == self._self_name:
             return node
-        if not any((d / (name + ".py")).exists() for d in self._sibling_dirs):
+        if not self._is_sibling(name):
             return node
         return ast.ImportFrom(
             module=self._pkg, names=[ast.alias(name=name, asname=None)], level=0,
@@ -394,16 +405,19 @@ def _implicit_relative_fixer(file_path, logical_rel):
     AttributeError described above. Every other member of the compatibility
     set applies to mod files; this was the one that did not.
 
-    Siblings are looked up in the mod directory AND the stock SDK package:
-    a mod that replaces one module of a package still relies on the stock
-    siblings being there. Mirrors tests/conftest._implicit_relative_fixer.
+    Siblings are looked up in the mod directory AND the stock manifest's
+    package: a mod that replaces one module of a package still relies on the
+    stock siblings being there. A stock file (a listed `.pyc`, or a test
+    fixture) takes its logical path from the manifest, in the manifest's
+    spelling, and its siblings from the manifest alone. Mirrors
+    tests/conftest._implicit_relative_fixer.
     """
+    from engine import stock_scripts as _stock
     p = Path(file_path)
-    sdk_scripts = _sdk_scripts()
+    is_stock = _stock.owns(p)
     if logical_rel is None:
-        try:
-            logical_rel = p.relative_to(sdk_scripts)
-        except ValueError:
+        logical_rel = _stock.logical_rel(p)
+        if logical_rel is None:
             # Unknown provenance: no package, so no rewrite (as before).
             return _FixImplicitRelativeImport(None, [], p.stem)
     logical = Path(logical_rel)
@@ -411,10 +425,12 @@ def _implicit_relative_fixer(file_path, logical_rel):
     pkg = ".".join(parts[:-1]) if len(parts) > 1 else None
     sibling_dirs = [p.parent]
     if pkg:
-        sdk_dir = sdk_scripts.joinpath(*parts[:-1])
-        if sdk_dir != p.parent:
-            sibling_dirs.append(sdk_dir)
-    return _FixImplicitRelativeImport(pkg, sibling_dirs, logical.stem)
+        stock_pkg = _stock.find("/".join(parts[:-1]))
+        if (stock_pkg is not None and stock_pkg.is_package
+                and stock_pkg.path.parent != p.parent):
+            sibling_dirs.append(stock_pkg.path.parent)
+    return _FixImplicitRelativeImport(
+        pkg, sibling_dirs, logical.stem, [] if is_stock else [p.parent])
 
 
 class _AliasLoader(importlib.abc.Loader):
@@ -426,12 +442,24 @@ class _AliasLoader(importlib.abc.Loader):
         pass
 
 
+class _EmptyPackageLoader(importlib.abc.Loader):
+    """A package with nothing in it: stock_scripts.SYNTHETIC_PACKAGES."""
+    def create_module(self, spec):
+        return None
+    def exec_module(self, module):
+        pass
+
+
 def _module_tree(path, fullname):
-    """The AST an SDK-loader file compiles from: parsed from source, or --
-    for a mod-provided Python 1.5 `.pyc` with no `.py` -- lifted from its
-    bytecode by engine.py15 into the tree that source would have parsed to.
-    Only _mod_override_spec ever hands this a `.pyc`; stock always loads
-    from SDK source. Mirrors tests/conftest._module_tree."""
+    """The AST an SDK-loader file compiles from. A stock file (under the
+    install's scripts root, or a test fixture) comes from
+    engine.stock_scripts: the retail `.pyc` hash-checked and lifted. A mod's
+    Python 1.5 `.pyc` with no `.py` is lifted by engine.py15 into the tree
+    its source would have parsed to; a mod's `.py` is parsed from source.
+    Mirrors tests/conftest._module_tree."""
+    from engine import stock_scripts as _stock
+    if _stock.owns(path):
+        return _stock.load_tree(path, fullname)
     if str(path).lower().endswith(".pyc"):
         from engine import py15
         return py15.load_tree(path, fullname)
@@ -446,9 +474,9 @@ class _SDKLoader(importlib.abc.Loader):
                  logical_rel: str = None):
         self.path = path
         self.also_register_as = also_register_as
-        # Where this file sits relative to the SDK scripts root LOGICALLY.
-        # Only a mod-provided file needs it stated; a stock file's on-disk
-        # path already answers the question.
+        # Where this file sits relative to the scripts root LOGICALLY. Only
+        # a mod-provided file needs it stated; for a stock file the manifest
+        # already answers the question.
         self.logical_rel = logical_rel
 
     def create_module(self, spec):
@@ -565,39 +593,28 @@ def _mod_override_spec(fullname, logical, qualified=None):
 
 
 def _stock_dotted_name(logical, leaf_name):
-    """Dotted name for a folded index key, using the STOCK SDK's own spelling
-    for every parent directory that exists there.
+    """Dotted name for a folded index key, using the stock manifest's own
+    spelling for every parent directory it lists.
 
     Index keys are case-folded; module names are not. Registering
     "ships.newship" for a file every other import spells "ships.NewShip"
     would give two live module objects for one file — the duplicate-state
     bug the bare-name branch exists to prevent. Mirrors
     tests/conftest._stock_dotted_name."""
+    from engine import stock_scripts as _stock
     parts = logical.split("/")
     out = []
-    cur = _sdk_scripts()
-    for part in parts[:-1]:
-        found = None
-        if cur is not None:
-            try:
-                for entry in sorted(cur.iterdir()):
-                    if entry.is_dir() and entry.name.lower() == part:
-                        found = entry.name
-                        cur = entry
-                        break
-            except OSError:
-                pass
-        if found is None:
-            found = part
-            cur = None
-        out.append(found)
+    for i, part in enumerate(parts[:-1]):
+        listed = _stock.children("/".join(parts[:i + 1]))
+        out.append(listed[0].rel.split("/")[i] if listed else part)
     out.append(leaf_name)
     return ".".join(out)
 
 
 class _SDKFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
-        sdk_scripts = _sdk_scripts()
+        stock_scripts = _stock_scripts()
+        from engine import stock_scripts as _stock
         rel = fullname.replace(".", "/")
         if (_PROJECT_ROOT / (rel + ".py")).exists():
             return None
@@ -613,93 +630,87 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
         _cspec = _claimed_spec(fullname) if _claimed_spec is not None else None
         if _cspec is not None:
             return _cspec
-        # An installed mod's script wins over the stock SDK module. Checked
+        # An installed mod's script wins over the stock module. Checked
         # after the project-root shims (those are OUR replacements and must
-        # not be overridable) and before the SDK itself. Never over the
-        # standard library -- see _mods_may_override().
+        # not be overridable) and before stock. Never over the standard
+        # library -- see _mods_may_override().
         from engine import mods as _mods
         _spec = _mod_override_spec(fullname, rel)
         if _spec is not None:
             return _spec
-        # Regular SDK module
-        candidate = _case_paths.resolve(sdk_scripts, rel + ".py")
-        if candidate is not None:
-            loader = _SDKLoader(str(candidate))
-            return importlib.machinery.ModuleSpec(fullname, loader, origin=str(candidate))
-        pkg_init = _case_paths.resolve(sdk_scripts, rel + "/__init__.py")
-        if pkg_init is not None:
-            loader = _SDKLoader(str(pkg_init))
-            spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(pkg_init))
-            spec.submodule_search_locations = [str(pkg_init.parent)]
+        # A package the SDK shipped as an empty __init__.py and retail lacks
+        # (Custom): with no mod providing it, an empty package, so mods'
+        # Custom/* and the claimed Custom.* names import with no SDK.
+        if rel.casefold() in {n.casefold() for n in _stock.SYNTHETIC_PACKAGES}:
+            spec = importlib.machinery.ModuleSpec(fullname, _EmptyPackageLoader())
+            spec.submodule_search_locations = []
+            return spec
+        # Stock module or package: listed in the manifest, lifted from the
+        # install's .pyc (a test fixture in the test suite only).
+        _sf = _stock.find(rel)
+        if _sf is not None:
+            loader = _SDKLoader(str(_sf.path))
+            spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(_sf.path))
+            if _sf.is_package:
+                spec.submodule_search_locations = [str(_sf.path.parent)]
             return spec
         # Submodule via explicit path: parent package has __path__ pointing into
-        # an SDK directory (e.g. Characters → Bridge/Characters).
+        # a stock directory (e.g. Characters -> Bridge/Characters).
         if path:
             child = fullname.rpartition(".")[2]
             for _search_dir in path:
                 _p = Path(_search_dir)
-                if str(sdk_scripts) not in str(_p):
+                if str(stock_scripts) not in str(_p):
                     continue
+                try:
+                    _dir_rel = _p.relative_to(stock_scripts).as_posix()
+                except ValueError:
+                    continue
+                _logical = child if _dir_rel == "." else f"{_dir_rel}/{child}"
+                _sf = _stock.find(_logical)
+                _qual = (_sf.rel if _sf is not None else _logical).replace("/", ".")
                 # The index again, for the logical path this search directory
                 # implies. An import arriving through a parent package's
                 # __path__ (Characters -> Bridge/Characters) never matches the
                 # plain dotted lookup above, so without this a mod override
                 # loses to the stock file for that whole shape.
-                try:
-                    _dir_rel = _p.relative_to(sdk_scripts).as_posix()
-                except ValueError:
-                    _dir_rel = None
-                if _dir_rel is not None:
-                    _logical = child if _dir_rel == "." else f"{_dir_rel}/{child}"
-                    _spec = _mod_override_spec(
-                        fullname, _logical, _logical.replace("/", "."))
-                    if _spec is not None:
-                        return _spec
-                _cand = _case_paths.resolve(_p, child + ".py")
-                if _cand is not None:
-                    _rel_parts = _cand.relative_to(sdk_scripts).with_suffix("").parts
-                    _qual = ".".join(_rel_parts)
-                    if _qual != fullname and _qual in sys.modules:
-                        loader = _AliasLoader(sys.modules[_qual])
-                    else:
-                        loader = _SDKLoader(str(_cand), also_register_as=(_qual if _qual != fullname else None))
-                    return importlib.machinery.ModuleSpec(fullname, loader, origin=str(_cand))
-                _pkg = _case_paths.resolve(_p, child + "/__init__.py")
-                if _pkg is not None:
-                    _rel_parts = _pkg.parent.relative_to(sdk_scripts).parts
-                    _qual = ".".join(_rel_parts)
-                    if _qual != fullname and _qual in sys.modules:
-                        loader = _AliasLoader(sys.modules[_qual])
-                    else:
-                        loader = _SDKLoader(str(_pkg), also_register_as=(_qual if _qual != fullname else None))
-                    spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(_pkg))
-                    spec.submodule_search_locations = [str(_pkg.parent)]
-                    return spec
-        # Python 1.5 implicit relative import fallback: BC engine added each SDK
+                _spec = _mod_override_spec(fullname, _logical, _qual)
+                if _spec is not None:
+                    return _spec
+                if _sf is None:
+                    continue
+                if _qual != fullname and _qual in sys.modules:
+                    loader = _AliasLoader(sys.modules[_qual])
+                else:
+                    loader = _SDKLoader(str(_sf.path), also_register_as=(_qual if _qual != fullname else None))
+                spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(_sf.path))
+                if _sf.is_package:
+                    spec.submodule_search_locations = [str(_sf.path.parent)]
+                return spec
+        # Python 1.5 implicit relative import fallback: BC engine added each
         # package directory to sys.path, so bare `import X` inside Bridge/ found
-        # Bridge/X.py.  Search SDK subdirectories for a unique match.
+        # Bridge/X. Search the manifest (never the disk) for the leaf name.
         if "." not in fullname:
-            matches = _case_paths.rglob_py(sdk_scripts, fullname)
+            matches = _stock.find_by_leaf(fullname)
             caller_dir = None
             frame = sys._getframe(1)
             while frame is not None:
                 co_file = frame.f_code.co_filename
-                if str(sdk_scripts) in co_file:
+                if str(stock_scripts) in co_file:
                     caller_dir = Path(co_file).parent
                     break
                 frame = frame.f_back
             if caller_dir:
-                matches.sort(key=lambda p: (p.parent != caller_dir, str(p)))
+                matches.sort(key=lambda sf: (sf.path.parent != caller_dir, sf.rel))
             for candidate in matches:
-                rel_parts = candidate.relative_to(sdk_scripts).with_suffix("").parts
-                qualified = ".".join(rel_parts)
+                qualified = candidate.rel.replace("/", ".")
                 # A mod overriding this stock file must win HERE too. This
                 # branch used not to consult the index at all: it loaded the
                 # stock file and registered it as sys.modules[qualified], so a
                 # bare `import Fsteamr` arriving before the first
                 # `import ships.Fsteamr` permanently defeated the override and
                 # which one won depended on import order.
-                _spec = _mod_override_spec(fullname, "/".join(rel_parts), qualified)
+                _spec = _mod_override_spec(fullname, candidate.rel, qualified)
                 if _spec is not None:
                     return _spec
                 if qualified in sys.modules:
@@ -709,12 +720,13 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                 else:
                     # Load fresh and also register under the qualified dotted name
                     # so that package.Submodule attribute lookups work.
-                    loader = _SDKLoader(str(candidate), also_register_as=qualified)
-                return importlib.machinery.ModuleSpec(fullname, loader, origin=str(candidate))
-            # No stock file of that name anywhere, but a mod may still add one
-            # in a subdirectory -- this branch is the only route to it. Cannot
-            # change stock behaviour: it runs only when the rglob found nothing.
-            # Any mod's .py beats any mod's .pyc (spec 4.3), across directories.
+                    loader = _SDKLoader(str(candidate.path), also_register_as=qualified)
+                return importlib.machinery.ModuleSpec(fullname, loader, origin=str(candidate.path))
+            # No stock module of that name anywhere, but a mod may still add
+            # one in a subdirectory -- this branch is the only route to it.
+            # Cannot change stock behaviour: it runs only when the manifest
+            # had no match. Any mod's .py beats any mod's .pyc (spec 4.3),
+            # across directories.
             for _suffix in (".py", ".pyc"):
                 for _key, _mf in sorted(_mods.current().files.items()):
                     if _mf.target != "sdk" or "/" not in _key:  # paths-guard: kind label
@@ -755,21 +767,32 @@ def purge_run_modules():
 
 
 def setup_sdk() -> None:
-    """Install SDK finder and stub modules. Call once before run_mission()."""
-    global _BASELINE_MODULES
+    """Install SDK finder and stub modules. Call once before run_mission().
 
-    # Pre-import stdlib modules that BC's SDK shadows. The SDK finder we're
-    # about to install sits at sys.meta_path[0] and `sdk/Build/scripts/` has a
-    # Python-1.5-era `string.py` (uses backtick-repr syntax) that masks
+    Refuses a broken install first (StockInstallError naming the file): the
+    game never runs with a stock module silently missing (spec decision 7).
+    """
+    global _BASELINE_MODULES
+    from engine import paths
+    from engine import stock_scripts as _stock
+    _stock.require_install(paths.game_root())
+
+    # Pre-import stdlib modules that BC's scripts shadow. The SDK finder we're
+    # about to install sits at sys.meta_path[0] and the stock scripts include
+    # a Python-1.5-era `string` module (uses backtick-repr syntax) that masks
     # stdlib's `string`. Without this, anything that triggers
     # `import logging` -> `from string import Template` after setup_sdk()
-    # tries to load the SDK's `string.py` and crashes with SyntaxError.
+    # tries to load the stock `string` and crashes.
     # Under pytest the issue is hidden because pytest itself imports logging
     # (-> string) at startup, so the modules are already cached. The host
     # binary doesn't have that luxury — call this before the finder.
     import string  # noqa: F401
 
-    sdk_scripts = _sdk_scripts()
+    stock_scripts = _stock_scripts()
+
+    def _stock_dir(rel):
+        found = _case_paths.resolve(stock_scripts, rel)
+        return str(found if found is not None else stock_scripts / rel)
 
     if not any(isinstance(f, _SDKFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _SDKFinder())
@@ -779,12 +802,12 @@ def setup_sdk() -> None:
 
     if "Bridge" not in sys.modules:
         _bridge = types.ModuleType("Bridge")
-        _bridge.__path__ = [str(sdk_scripts / "Bridge")]  # type: ignore[attr-defined]
+        _bridge.__path__ = [_stock_dir("Bridge")]  # type: ignore[attr-defined]
         sys.modules["Bridge"] = _bridge
 
     if "Actions" not in sys.modules:
         _actions = types.ModuleType("Actions")
-        _actions.__path__ = [str(sdk_scripts / "Actions")]  # type: ignore[attr-defined]
+        _actions.__path__ = [_stock_dir("Actions")]  # type: ignore[attr-defined]
         sys.modules["Actions"] = _actions
 
     _plain_stubs = [
@@ -843,7 +866,7 @@ def setup_sdk() -> None:
     # Multiplayer: pre-create the package so child stubs land as attributes.
     if "Multiplayer" not in sys.modules:
         _mp_pkg = types.ModuleType("Multiplayer")
-        _mp_pkg.__path__ = [str(sdk_scripts / "Multiplayer")]
+        _mp_pkg.__path__ = [_stock_dir("Multiplayer")]
         sys.modules["Multiplayer"] = _mp_pkg
 
     _multiplayer_ui_stubs = [
@@ -863,7 +886,7 @@ def setup_sdk() -> None:
     # Characters: alias package for Bridge.Characters (Python 1.5 implicit relative imports).
     if "Characters" not in sys.modules:
         _chars = types.ModuleType("Characters")
-        _chars.__path__ = [str(sdk_scripts / "Bridge" / "Characters")]  # type: ignore[attr-defined]
+        _chars.__path__ = [_stock_dir("Bridge/Characters")]  # type: ignore[attr-defined]
         sys.modules["Characters"] = _chars
 
     # Episode-level scripts: pre-load so mission scripts reading carry-over

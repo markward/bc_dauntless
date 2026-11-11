@@ -1,13 +1,17 @@
-"""Load mod scripts shipped only as Python 1.5 bytecode (``.pyc``).
+"""Load Python 1.5 bytecode (``.pyc``) scripts: stock and mod.
 
-BC's ``stbc.exe`` embeds Python 1.5 and imports ``.pyc`` directly, so some
-mods ship no source (the LC Intrepid Pack's two torpedo projectiles). The
-SDK loader in both tools/mission_harness.py and tests/conftest.py calls
-``load_tree`` for a mod ``.pyc`` and then treats the tree exactly like one
-parsed from source.
+BC's ``stbc.exe`` embeds Python 1.5 and imports ``.pyc`` directly. Every
+STOCK script now comes from the retail install's ``.pyc``, lifted here (via
+``engine.stock_scripts``, which adds the manifest and hash check; spec
+docs/superpowers/specs/2026-11-11-no-sdk-runtime-design.md), and some mods
+ship no source either (the LC Intrepid Pack's two torpedo projectiles). The
+SDK loader in both tools/mission_harness.py and tests/conftest.py lifts
+stock and mod ``.pyc`` alike and then treats the tree exactly like one
+parsed from source. ``load_tree`` below is the MOD route: its refusal logs
+once and lets importers fall back, where an unliftable stock file stops boot.
 
-Nothing derived from a mod is ever written anywhere: the tree goes straight
-to ``compile()``. Spec:
+Nothing derived from a lifted module is ever written anywhere: the tree goes
+straight to ``compile()``. Spec:
 docs/superpowers/specs/2026-10-15-pyc-only-mod-modules-design.md
 """
 from __future__ import annotations
