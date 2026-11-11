@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 #include "dauntless/combat/mirror.h"
 
@@ -26,6 +27,15 @@ namespace dauntless::combat {
 struct InstanceId {
     uint32_t index = 0;
     uint32_t generation = 0;
+};
+
+// One ship_instances / planet_instances value as the kernels see it: an
+// InstanceId, or `bad` for a value that is not one (pybind would raise
+// inside _resolve_hit_point's try: the trace yields nothing). An ABSENT
+// entry (Python's None) is no InstanceRef at all. K2Context::Iid is this.
+struct InstanceRef {
+    bool bad = false;
+    InstanceId id{};
 };
 
 // renderer::RayHit's point, normal and t, in the trace's float.
@@ -74,6 +84,17 @@ struct ResolvedHit {
     Vec3 point{0.0, 0.0, 0.0};
     std::optional<Vec3> normal;  // the mesh tier's surface normal only
 };
+
+// The mesh tier of combat._resolve_hit_point (combat.py:111-130) on an iid
+// with no mirror row behind it: the origin moved into view coordinates by
+// `view_offset` (frames.shifted: nullopt or a zero offset by a tuple compare
+// is no shift), host_io.ray_trace_mesh, and the hit moved back out by
+// -1.0 * view_offset. nullopt is Python's `result is None`: a miss, an empty
+// hook set (`_h is None`), or ANY exception from the trace (Python's
+// `except Exception`). The pair is (point, unit normal).
+std::optional<std::pair<Vec3, Vec3>> trace_instance_point(
+    const TraceHooks& hooks, InstanceId iid, const Vec3& origin,
+    const Vec3& dir, double max_dist, const std::optional<Vec3>& view_offset);
 
 // combat._resolve_hit_point(ship_instances, target, origin, dir, max_dist,
 // fallback_point) with sphere_fallback=True (every phaser call):

@@ -551,10 +551,7 @@ struct K2Context {
     // instance": the fallback point. `bad` is a value that is not an
     // InstanceId (pybind would raise inside _resolve_hit_point's try): the
     // sphere tier, as a stale id.
-    struct Iid {
-        bool bad = false;
-        InstanceId id{};
-    };
+    using Iid = InstanceRef;  // beam_trace.h (beam_block.h needs it too)
     std::unordered_map<int64_t, Iid> iids;
     // The trace: installed_trace_hooks(), or empty when host_io._h is None.
     TraceHooks hooks;
