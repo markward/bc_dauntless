@@ -1,6 +1,6 @@
 # Foundation: BridgeDef and StarBaseDef
 
-**Status:** built on `feat/foundation-bridge-starbase-defs`, not merged, not live-tested.
+**Status:** built on `feat/foundation-bridge-starbase-defs`. Live-checked by Mark 2026-11-11: the Intrepid Bridge 2.0 pack's bridge (after the texture-folder and viewscreen fixes) and KM's Starbase 220 in Quick Battle (loads and spawns).
 **Date:** 2026-11-11
 **Related:** `2026-09-09-foundation-compatibility-design.md` (the Foundation surface), `2026-09-16-ship-bridge-matrix-design.md` §1 (the `_scan_mod_bridges` contract this fills in), `2026-11-11-legacy-script-parsing-design.md` (the Python 1.5 fixes plugins now get)
 
@@ -33,8 +33,19 @@ Focused tests (no BC or mod content): `tests/unit/test_foundation_loader.py`, `t
 
 Against KM, statically (no KM code was run): the scan finds 18 bridge scripts, and every one of the 16 non-stock literal `BridgeDef` calls names one of them (two differ only in case, which the lookup folds).
 
-## 5. Not done
+## 5. Live check (Mark, 2026-11-11)
 
-- **Live check.** No mod bridge has been loaded in game. The renderer, bridge lighting and officer animation have only ever drawn the two stock bridges; a pack's bridge NIF, its viewscreen and its officers' animations are the first thing to look at.
-- **KM's stations in Quick Battle** need the rest of KM's ship registrations to load, which runs KM's plugins; not tried here.
+Found and fixed during it:
+
+- **A pack's flat texture folder.** Bridge scripts name `<set>/High/` but packs often ship textures beside the NIF; set textures now search the LoadModel folder, then the NIF's own folder, with the stock tier folder kept last (`host_loop._set_texture_dirs`).
+- **The viewscreen feed on a mod screen mesh** whose UVs run outside 0-1: the feed's UV is wrapped before the V flip (`bridge.frag`). The Intrepid screen is about 2.29:1 against a 16:9 feed, so it is stretched about 30% horizontally; BC likely did the same (unverified).
+- **A bytecode-only mod ship** (`ships/Starbase220.pyc`, no `.py`) was reported unresolved: the installed-ship scan now accepts `.pyc`.
+- **A raising script action ended the game** (the station script read `SpeciesToShip.STARBASE220`, which only KM's replaced species table defines). A `TGScriptAction` that raises now prints its traceback and counts as finished, like broadcast handlers.
+
+Starbase 220 needs KM's own `Multiplayer/SpeciesToShip` (KM replaces the stock one) and a `bcdebug` module (KM's needs BC's Windows-only `nt`). The model loads and spawns; Mark judged it ugly, which is the asset.
+
+## 6. Not done
+
+- KM's other stations, and KM as a whole pack (its plugins, its `bcdebug`/`nt` dependency).
+- The Intrepid pack's `bridgemenuscroller.py` plugin needs `OverrideDef` and fails at load (reported, harmless).
 - `SystemDef`, `OverrideDef`, FoundationTech, and the `Maps` / `bridgeSound` / `LoadingScreen` settings.
