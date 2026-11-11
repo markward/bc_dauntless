@@ -8843,6 +8843,29 @@ def _bridge_overlay_dirs(tex_rel) -> list:
     return [str(d) for d in _mods.replacements().dirs_for(tex_rel)]
 
 
+def _set_texture_dirs(nif, env, fallback=None) -> list:
+    """Texture search dirs for a set's NIF (bridge, viewscreen, comm set).
+
+    The LoadModel env folder first (else `fallback`, else BC's
+    <NIF folder>/High), then the NIF's own folder, as for ships
+    (_ship_texture_search): bridge packs ship their textures flat beside the
+    NIF while the script names a High/ folder (Intrepid Bridge 2.0), and BC
+    found them. The stock tier folder stays LAST because the interior sibling
+    policy reads the last dir as the stock folder (model_build.cc
+    sibling_dirs_for).
+    """
+    import posixpath as _pp
+    nif_dir = _pp.dirname(str(nif).replace("\\", "/"))
+    tier = (env or fallback or nif_dir + "/High").replace("\\", "/").rstrip("/")
+    tier_dirs = [str(p) for p in _paths.game_asset_dirs(tier)]
+    own = [str(p) for p in _paths.game_asset_dirs(nif_dir)] if nif_dir else []
+    out = []
+    for d in (*tier_dirs[:-1], *own, tier_dirs[-1]):
+        if d not in out:
+            out.append(d)
+    return out
+
+
 def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 comm_set_id: int = None) -> None:
     """Realize any SDK set's renderable content into the renderer.
@@ -8917,7 +8940,7 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             # rather than the DBridge fallback (which holds only DBridge's tgas).
             import posixpath as _pp
             tex_rel = _pp.dirname(nif) + "/High"
-        tex_abs = [str(p) for p in _paths.game_asset_dirs(tex_rel)]
+        tex_abs = _set_texture_dirs(nif, tex_rel)
         if is_bridge:
             handle = r.load_model(nif_abs, tex_abs, interior=True,
                                   sibling_overlay_dirs=_bridge_overlay_dirs(tex_rel))
@@ -8959,8 +8982,7 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 controller.viewscreen_instance = None
             vs_nif_abs = str(_paths.game_asset(vs.nif))
             vs_env = _App.g_kModelManager.env_for(vs.nif)
-            vs_tex = ([str(p) for p in _paths.game_asset_dirs(vs_env)] if vs_env
-                      else [str(p) for p in _paths.game_asset_dirs(DBRIDGE_TEX_REL)])
+            vs_tex = _set_texture_dirs(vs.nif, vs_env, fallback=DBRIDGE_TEX_REL)
             vs_handle = r.load_model(vs_nif_abs, vs_tex, interior=True)
             vs_iid = r.create_bridge_instance(vs_handle)
             r.set_world_transform(vs_iid, IDENTITY_MAT4)

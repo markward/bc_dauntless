@@ -14,6 +14,10 @@ uniform float u_alpha_test_threshold;
 // bottom-up (GL origin bottom-left) whereas the NIF screen UVs are authored
 // top-down like every .tga, so the feed samples upside-down without this
 // flip. Same fix as cef_composite_pass.cc. Affects the base sample only.
+// The feed's UVs are also wrapped (fract), as GL_REPEAT would: the feed is a
+// clamped HDR target, and a mod screen may use a shifted UV range (Intrepid
+// Bridge 2.0's runs V 1..2), which clamping smears into vertical streaks.
+// Stock screens' UVs sit inside 0..1, so fract leaves them unchanged.
 uniform int u_flip_v;
 // Brightness multiplier for the viewscreen feed, used for ViewOn/ViewOff
 // fade transitions. 1.0 for all other bridge geometry (byte-identical).
@@ -589,7 +593,10 @@ float channel(int has_map, sampler2D map, float override_v, float dflt) {
 
 void main() {
     vec2 base_uv = v_uv;
-    if (u_flip_v != 0) base_uv.y = 1.0 - base_uv.y;
+    if (u_flip_v != 0) {
+        base_uv = fract(base_uv);
+        base_uv.y = 1.0 - base_uv.y;
+    }
     vec4 base = texture(u_base_color, base_uv);
     if (u_face_blend != 0)
         base = mix(base, texture(u_face_b, base_uv), clamp(u_face_mix, 0.0, 1.0));
