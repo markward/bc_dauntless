@@ -196,9 +196,10 @@ def test_friendly_fire_counts_pulses_not_frames(scene, monkeypatch):
         scene.fire()
         for _ in range(60):
             scene.step()
-            App.g_kEventManager.ProcessEvents() \
-                if hasattr(App.g_kEventManager, "ProcessEvents") else None
         pulses = [e for e in _events if e.GetDamage() > 0]
+        assert all(e.GetDestination() is scene.blocker for e in _events)
+        assert reports, "ET_FRIENDLY_FIRE_REPORT was never dispatched"
+        assert all(r.GetSource() is scene.blocker for r in reports)
         assert 1 <= len(pulses) < 60
         assert util.GetCurrentFriendlyFire() == pytest.approx(
             sum(e.GetDamage() for e in _events))
