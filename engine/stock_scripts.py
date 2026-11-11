@@ -42,6 +42,7 @@ import json
 import os
 import re
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -532,7 +533,12 @@ def _proves_lift(path: Path) -> Optional[str]:
     except OSError as exc:
         return "%s: %s" % (type(exc).__name__, exc)
     try:
-        compile(tree, str(path), "exec")
+        # Retail code warns on compile (MissionLib's `is` with a literal);
+        # a proof is not a lint, so keep it out of the player's log, as the
+        # loaders' own compile does.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            compile(tree, str(path), "exec")
     except (SyntaxError, ValueError, TypeError, RecursionError) as exc:
         return "lifted code does not compile: %s: %s" % (type(exc).__name__, exc)
     return None

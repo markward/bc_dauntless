@@ -11,6 +11,7 @@ import dataclasses
 import hashlib
 import json
 import re
+import warnings
 
 import pytest
 
@@ -134,6 +135,23 @@ def test_lifted_but_uncompilable_file_is_unliftable(tmp_path, monkeypatch):
     assert check.unliftable == ("scripts/Odd.pyc",)
     assert "does not compile" in check.message
     assert not (tmp_path / "cache" / VERDICTS).exists()
+
+
+def test_proving_a_lift_prints_no_compiler_warning(tmp_path, monkeypatch, capsys):
+    """Retail MissionLib has `x is <literal>`: compiling its lifted tree
+    warns. The boot check is a proof, not a lint, and the player's log is
+    not the place for it."""
+    root = _install(tmp_path, {"New.pyc": b"new"})
+    stock_scripts.configure({"New.pyc": ["f" * 32]}, None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tree = ast.parse("x = 1\ny = x is 1\n")
+    monkeypatch.setattr(py15, "lift_file", lambda _p: tree)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert stock_scripts.check_install(root).ok
+    assert [w for w in caught if issubclass(w.category, SyntaxWarning)] == []
+    assert "SyntaxWarning" not in capsys.readouterr().err
 
 
 def test_unknown_but_liftable_file_is_ok_and_recorded_as_changed(tmp_path, capsys):
