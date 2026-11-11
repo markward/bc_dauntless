@@ -1,6 +1,6 @@
 # Beams stop on the first thing in their path — design
 
-Status: built on feat/beam-blocking (2026-11-11), not live-verified.
+Status: built on feat/beam-blocking (2026-11-11); live-verified by Mark 2026-11-11 (fly through a beam, fire past an ally, fire at a ship behind a planet). Perf capture owed.
 
 ## 1. Intent
 
@@ -353,6 +353,6 @@ says "not live-verified".
   reads the same answer from the planet row (`_k2_planet_rows`' `hidden`).
 - **Golden**: Mark re-recorded the `beam_scene` render golden on 2026-11-11;
   drawn beams now end on blockers from frame 19.
-- **Owed**: live check (fly through a beam between two AI ships, fire past an
-  ally, fire at a ship behind a planet) and a before/after profiler capture on
+- **Live check**: done by Mark 2026-11-11 (fly through a beam between two AI ships, fire past an
+  ally, fire at a ship behind a planet). **Owed**: a before/after profiler capture on
   `combat_stress` (`cb.phasers`, beam feed, `cb.render_data`).
