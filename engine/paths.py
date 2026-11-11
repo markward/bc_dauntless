@@ -390,6 +390,14 @@ def sdk_root() -> Path:
     return _root("sdk")
 
 
+def stock_scripts() -> Path:
+    """The install's own scripts folder (game_root()/scripts), matched
+    case-insensitively. Resolved at use, never captured."""
+    root = game_root()
+    found = case_paths.resolve(root, "scripts")
+    return found if found is not None else root / "scripts"
+
+
 def sdk_scripts_in(root: Path) -> Path:
     """root/Build/scripts. Pure: takes the root rather than resolving one.
 
