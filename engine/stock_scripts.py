@@ -15,11 +15,16 @@ docs/superpowers/specs/2026-11-11-no-sdk-runtime-design.md, §2 decisions
   hash is in no known retail set still loads, after ONE warning per path per
   process (decision 6). A missing or unliftable listed file raises
   ``StockScriptError`` naming it (decision 7).
+* ``check_install`` proves an install at boot (spec §4.1a): every listed
+  file is hashed; a missing one, or an unknown hash that does not lift and
+  compile, fails naming the file. A positive "this hash lifts" verdict is
+  cached by hash in ``paths.cache_dir()``. ``validate_install``/``checked``
+  feed the first-run screen; ``require_install`` raises for headless use.
 * ``SYNTHETIC_PACKAGES``: package names the SDK shipped as an empty
   ``__init__.py`` and retail lacks; the loaders create them empty.
 
 Never write lifted text, or anything derived from a lifted module, to disk:
-the tree goes straight to the caller.
+the tree goes straight to the caller. The verdict cache holds hashes only.
 
 The fixture-tree API (``add_fixture_tree``, ``clear_fixture_trees``,
 ``fixture_tgl_roots``) is TEST-ONLY (decision 8): it lets the test loader
@@ -29,8 +34,12 @@ the manifest and never shadow a listed module. The game never calls it.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import hashlib
+import importlib.resources
 import json
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -41,9 +50,11 @@ from engine.py15 import marshal15
 from engine.py15.source import fix_source, read_source
 
 __all__ = [
-    "SYNTHETIC_PACKAGES", "StockFile", "StockScriptError", "add_fixture_tree",
+    "InstallCheck", "SYNTHETIC_PACKAGES", "StockFile", "StockInstallError",
+    "StockScriptError", "add_fixture_tree", "check_install", "checked",
     "children", "clear_fixture_trees", "configure", "find", "find_by_leaf",
-    "fixture_tgl_roots", "is_stock", "load_tree", "top_level_functions",
+    "fixture_tgl_roots", "is_stock", "load_tree", "require_install",
+    "top_level_functions", "validate_install",
 ]
 
 SYNTHETIC_PACKAGES: tuple[str, ...] = ("Custom",)
@@ -114,6 +125,7 @@ _committed: Optional[dict] = None
 _index: Optional[_Index] = None
 _index_manifest: Optional[dict] = None
 _warned: set = set()
+_required: dict = {}      # require_install's memo, str(root) -> InstallCheck
 
 
 def configure(manifest_modules: Optional[dict] = None,
@@ -125,6 +137,7 @@ def configure(manifest_modules: Optional[dict] = None,
     _root_override = Path(scripts_root) if scripts_root is not None else None
     _index = None
     _index_manifest = None
+    _required.clear()
 
 
 def _manifest() -> dict:
@@ -132,7 +145,11 @@ def _manifest() -> dict:
     if _manifest_override is not None:
         return _manifest_override
     if _committed is None:
-        text = Path(__file__).with_name("stock_manifest.json").read_text("utf-8")
+        # Package data, read through importlib.resources: this module also
+        # writes (the verdict cache), and must not build a path from its own
+        # location (tests/unit/test_install_write_guard.py).
+        text = (importlib.resources.files("engine")
+                .joinpath("stock_manifest.json").read_text("utf-8"))
         _committed = json.loads(text)["modules"]
     return _committed
 
@@ -253,6 +270,21 @@ def top_level_functions(sf: StockFile) -> dict[str, tuple[str, ...]]:
 
 # --- loading ---------------------------------------------------------------
 
+def _digest(data: bytes) -> str:
+    return hashlib.blake2b(data, digest_size=16).hexdigest()
+
+
+def _warn_unknown(path: Path, key: str) -> None:
+    """Decision 6's one warning per file per process, shared by the boot
+    check and the loader so a file warns once whichever sees it first."""
+    if str(path) in _warned:
+        return
+    _warned.add(str(path))
+    print("[stock-scripts] scripts/%s differs from every known retail "
+          "copy (the install may be modded); loading it anyway" % key,
+          flush=True)
+
+
 def _entry_for(path: Path) -> Optional[_Entry]:
     index = _current()
     entry = index.by_path.get(str(path))
@@ -285,15 +317,203 @@ def load_tree(path: str, fullname: str) -> ast.Module:
         raise StockScriptError(
             "stock module %s: cannot read scripts/%s (%s): %s"
             % (fullname, entry.key, p, exc), p) from exc
-    digest = hashlib.blake2b(data, digest_size=16).hexdigest()
-    if digest not in entry.hashes and str(p) not in _warned:
-        _warned.add(str(p))
-        print("[stock-scripts] scripts/%s differs from every known retail "
-              "copy (the install may be modded); loading it anyway"
-              % entry.key, flush=True)
+    if _digest(data) not in entry.hashes:
+        _warn_unknown(p, entry.key)
     try:
         return py15.lift(data)
     except py15.Py15Unsupported as exc:
         raise StockScriptError(
             "stock module %s: scripts/%s (%s) cannot be lifted: %s"
             % (fullname, entry.key, p, exc), p) from exc
+
+
+# --- boot install check (spec §4.1a, decision 7) ---------------------------
+
+_VERDICTS = "stock_lift_verdicts.json"
+_VERDICT_FORMAT = 1
+_HEX_HASH = re.compile(r"[0-9a-f]{32}")
+_MAX_NAMED = 3
+
+
+@dataclass(frozen=True)
+class InstallCheck:
+    """The verdict on one install's listed stock files. Every name is a
+    ``scripts/<manifest key>`` display string."""
+    ok: bool
+    missing: tuple[str, ...]
+    unliftable: tuple[str, ...]
+    changed: tuple[str, ...]
+    message: str
+
+
+class StockInstallError(RuntimeError):
+    """``require_install`` on an install that fails the check; the message
+    is ``InstallCheck.message``."""
+
+
+def _verdicts_path() -> Path:
+    return paths.cache_dir() / _VERDICTS
+
+
+def _load_verdicts() -> set:
+    """The cached hashes known to lift; anything malformed reads as none."""
+    try:
+        data = json.loads(_verdicts_path().read_text("utf-8"))
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(data, dict) or data.get("format") != _VERDICT_FORMAT:
+        return set()
+    lifts = data.get("lifts")
+    if not isinstance(lifts, list):
+        return set()
+    return {h for h in lifts if isinstance(h, str) and _HEX_HASH.fullmatch(h)}
+
+
+def _save_verdicts(lifts: set) -> None:
+    """Write the verdict cache atomically (temp file + ``os.replace``).
+    A failure is reported once, never raised: the cache is an optimisation."""
+    target = _verdicts_path()
+    tmp = target.with_name("%s.%d.tmp" % (target.name, os.getpid()))
+    text = json.dumps({"format": _VERDICT_FORMAT, "lifts": sorted(lifts)},
+                      indent=1) + "\n"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(text, "utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        paths.report_write_failure(target, exc)
+
+
+def _proves_lift(path: Path) -> Optional[str]:
+    """None when the file lifts AND the tree compiles (ruling R3); else why."""
+    try:
+        tree = py15.lift_file(path)
+    except py15.Py15Unsupported as exc:
+        return str(exc)
+    except OSError as exc:
+        return "%s: %s" % (type(exc).__name__, exc)
+    try:
+        compile(tree, str(path), "exec")
+    except (SyntaxError, ValueError, TypeError, RecursionError) as exc:
+        return "lifted code does not compile: %s: %s" % (type(exc).__name__, exc)
+    return None
+
+
+def _name_list(names) -> str:
+    shown = list(names[:_MAX_NAMED])
+    rest = len(names) - len(shown)
+    if rest:
+        return "%s and %d more" % (", ".join(shown), rest)
+    if len(shown) == 1:
+        return shown[0]
+    return "%s and %s" % (", ".join(shown[:-1]), shown[-1])
+
+
+def _message(missing: tuple, unliftable: tuple, reasons: dict) -> str:
+    parts = []
+    if missing:
+        parts.append(
+            "Your Bridge Commander scripts folder is incomplete: %s %s missing. "
+            "Reinstall Bridge Commander or pick another install."
+            % (_name_list(missing), "is" if len(missing) == 1 else "are"))
+    if unliftable:
+        first = unliftable[0]
+        reason = reasons[first] if len(unliftable) == 1 else (
+            "%s: %s" % (first, reasons[first]))
+        parts.append(
+            "BC Dauntless can't read %s in this Bridge Commander install (%s). "
+            "It may be modded: please use a clean install."
+            % (_name_list(unliftable), reason))
+    return " ".join(parts)
+
+
+def check_install(game_root: Path) -> InstallCheck:
+    """Hash every listed file under ``game_root``'s scripts folder (any
+    case). Missing -> ``missing``; an unknown hash -> ``changed`` plus the
+    one-time warning, then lifted once unless the verdict cache already
+    says that hash lifts; a failed lift or compile -> ``unliftable``."""
+    game_root = Path(game_root)
+    found = case_paths.resolve(game_root, "scripts")
+    scripts = found if found is not None else game_root / "scripts"
+    verdicts = _load_verdicts()
+    learned = False
+    missing, unliftable, changed = [], [], []
+    reasons: dict = {}
+    for key, hashes in sorted(_manifest().items()):
+        shown = "scripts/" + key
+        path = case_paths.resolve(scripts, key)
+        if path is None or not path.is_file():
+            missing.append(shown)
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            unliftable.append(shown)
+            reasons[shown] = "%s: %s" % (type(exc).__name__, exc.strerror or exc)
+            continue
+        digest = _digest(data)
+        if digest in hashes:
+            continue
+        changed.append(shown)
+        _warn_unknown(path, key)
+        if digest in verdicts:
+            continue
+        reason = _proves_lift(path)
+        if reason is None:
+            verdicts.add(digest)
+            learned = True
+        else:
+            unliftable.append(shown)
+            reasons[shown] = reason
+    if learned:
+        _save_verdicts(verdicts)
+    missing_t, unliftable_t = tuple(missing), tuple(unliftable)
+    return InstallCheck(ok=not missing_t and not unliftable_t,
+                        missing=missing_t, unliftable=unliftable_t,
+                        changed=tuple(changed),
+                        message=_message(missing_t, unliftable_t, reasons))
+
+
+def validate_install(path) -> paths.Validation:
+    """``paths.validate_game_root``, then (only if the markers pass) the
+    stock scripts check. A failed check names its files in ``missing`` and
+    carries the message as ``hint``."""
+    validation = paths.validate_game_root(path)
+    if not validation.ok:
+        return validation
+    check = check_install(validation.root)
+    if check.ok:
+        return validation
+    return paths.Validation(ok=False, root=validation.root,
+                            missing=check.missing + check.unliftable,
+                            hint=check.message)
+
+
+def checked(resolution: paths.Resolution) -> paths.Resolution:
+    """``resolution`` with a valid game root re-validated by
+    ``validate_install``; a failure unresolves the game (keeping its
+    source) so the first-run screen shows the problem."""
+    if resolution.game is None:
+        return resolution
+    validation = validate_install(resolution.game)
+    if validation.ok:
+        return resolution
+    return dataclasses.replace(resolution, game=None, game_validation=validation)
+
+
+def require_install(game_root: Path) -> InstallCheck:
+    """``check_install`` once per root per process (headless boot and
+    ``setup_sdk``); raises ``StockInstallError`` with the message when the
+    install fails."""
+    key = str(Path(game_root))
+    check = _required.get(key)
+    if check is None:
+        check = check_install(Path(game_root))
+        _required[key] = check
+    if not check.ok:
+        raise StockInstallError(check.message)
+    return check
