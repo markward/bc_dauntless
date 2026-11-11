@@ -158,6 +158,7 @@ class ObjectClass(TGEventHandlerObject):
     # Mirrored into the native combat row on every write (native_combat).
     _radius = native_combat.NativeField(float)
     _scale = native_combat.NativeField(float)
+    _hidden = native_combat.NativeField(bool)
     _containing_set = native_combat.NativeRefField("Set")
     # The hardpoint leaf (ShipClass sets it; articulation.leaf_for caches
     # it): a write marks the row for the part-slot resolution (native_combat

@@ -46,7 +46,7 @@ enum class Field : int32_t {
     xform_index, xform_gen, obj_id,
     has_sensor_getter, has_cloak_getter, is_rock, is_meta_nebula,
     // Object: mirrored attributes
-    _dead, _dying, _life_time, _containing_set, o_radius, _scale,
+    _dead, _dying, _hidden, _life_time, _containing_set, o_radius, _scale,
     _sensor_subsystem, _cloaking_subsystem, _hull,
     _fbm, _seed, spheres,
     // Object: weapon-fire inputs (phase 1b K1). has_posed_parts is 1 while
@@ -347,7 +347,7 @@ struct ObjectRow {
     uint64_t py_id = 0;
     int64_t has_sensor_getter = 0, has_cloak_getter = 0, is_rock = 0,
             is_meta_nebula = 0;
-    int64_t _dead = 0, _dying = 0;
+    int64_t _dead = 0, _dying = 0, _hidden = 0;
     double _life_time = 0.0;
     int64_t _containing_set = -1;
     double _radius = 0.0, _scale = 1.0;

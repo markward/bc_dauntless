@@ -1,3 +1,5 @@
+> **Extended 2026-11-11 (beam blocking, branch `feat/beam-blocking`):** the loop now stops a beam on the first object in its path (`beam_blockers.first_blocker`, after `bubble_entry`), and K2 walks it natively (`BLOCK` in `k2_beams.cc`, the C++ port in `beam_block.cc`) with the ASK `blocker` as its fallback. §1.1 shows the lines; §1.7 is the map. The header contract is `k2_beams.h`, THE BLOCKER.
+
 > **Superseded in part (2026-11-02, native-damage phase):** the damage pulse no longer hands a CONTACT record back to Python. K2 applies it in the walk through the native hit, so the next bank on the same target sees it by construction (ruling P1). See the native-damage spec §10.
 
 > **Implemented 2026-11-01** on branch `perf/native-combat-k2`, tip commit `6418f858f`. Outcome, measurements and rulings: `docs/superpowers/specs/2026-10-31-native-combat-k2-beams-design.md` §10. The map below is the pre-build snapshot and is not updated.
@@ -112,6 +114,13 @@ for ship in ships_list:                                                # list or
             max_dist=(dist * 1.5 if dist > 1e-6 else 0.0), fallback_point=target_pos)
         bubble_entry = (combat.shield_bubble_entry(target, emitter_pos, aim_unit, dist * 1.5)
                         if (aim_unit is not None and combat.shields_block(target)) else None)  # §1.5; shields_block only if aim_unit
+        if aim_unit is not None:                                       # §1.7 (2026-11-11) — the first object in the path
+            b = beam_blockers.first_blocker(ship, target, emitter_pos, aim_unit,
+                    beam_blockers.contact_distance(emitter_pos, impact_point, bubble_entry),
+                    beam_blockers.step_ships(), beam_blockers.step_planets(), ship_instances)
+            if b is not None:
+                if b.kind == "planet": continue                       # no contact, no pulse; the dwell taken is dropped
+                target, dist, impact_point, impact_normal, bubble_entry = (b.obj, b.dist, b.point, b.normal, b.bubble)
         ───────── PURE-GEOMETRY DECISION ENDS HERE (per bank) ─────────
         if flush_dwell <= 0.0:                                         # not a pulse tick on a beam that is on
             hit_feedback.beam_contact(ship=target, source=ship, point=impact_point, normal=impact_normal,
@@ -301,6 +310,34 @@ In the capture (§9), `shields_block` was True on 98.8% of contacts (369,792 bub
 | Contact | tick damage, splash radius, damage, damage_hull (pure arithmetic) | `beam_contact` or `apply_hit` |
 
 The decision ends after the bubble entry and the damage arithmetic. Everything after it is an effect.
+
+### 1.7 The blocker (added 2026-11-11, beam blocking)
+
+Python: `host_loop._phaser_step_bank`, right after `bubble_entry`, calls `engine/appc/beam_blockers.first_blocker` when `aim_unit` is known. Its candidates are `beam_blockers.step_ships()` (the step's `ships_list`, set by `begin_step` around `cb.phasers`) and the Planets of the shooter's set (`planet_rows`, from `step_planets()`, host_loop's `planet_instances`). Spec: `docs/superpowers/specs/2026-11-11-beam-blocking-design.md` §4-5.
+
+K2 (`k2_beams.cc`), after `BUBBLE` / `BUBBLE_ANSWER`:
+
+| State | Python line | What the kernel does |
+|---|---|---|
+| `BLOCK` | `if aim_unit is not None: b = first_blocker(...)` | `contact_dist` = \|bubble − emitter\| if the bubble is set, else \|impact − emitter\| (`math.sqrt` of the squares). `first_blocker` (`beam_block.h`) over the session's ship handles and the context's `planets`. `NeedPython` → ASK `blocker`. None → `PHASER_CONTACT`. Planet → `BANK_NEXT` (the logged dwell writes stay). Ship → `take_blocker`. |
+| `BLOCK_ANSWER` | (ASK blocker answered) | `None` / `("planet", d)` / `("ship", handle, d, point, normal, bubble, tier)`, as above. A handle with no live row: `std::logic_error` (protocol). |
+| `BLOCK_SHIELDS` | (`beam_contact`'s own `shields_block(target)`, now the blocker) | Native `shields_block` for the blocker, else ASK `shields_block` (`BLOCK_SHIELDS_ANSWER`). |
+| `PHASER_CONTACT` | `_phaser_contact(...)` | The rest, the native pulse or the CONTACT record, unchanged, on the substituted values. |
+
+`take_blocker` sets the contact's `target` (its handle), `dist`, impact point and normal, `bubble`; tier `Mesh` with a normal, else `Sphere`; and `point_is_bubble` when the blocker was met at its bubble with no mesh normal (Python's `point = b`: the records say tier `"bubble"`, and a native pulse's HIT_PRESENT carries `shield_point IS point`, `damage.h` H14). `target_pos` and `aim_unit` stay the intended target's.
+
+Feeds (driver, `native_combat.py`):
+
+- `_k2_planet_rows(ships, planet_instances)` → context `planets`: `(set handle, Object handle or -1, cx, cy, cz, world_radius, iid, hidden)` per Planet of each set a ship is in, in the set's object order, only where the planet's containing set is that set. `hidden` is `bool(planet.IsHidden())`, called by the driver for every planet (a planet with no Object row has no mirror `_hidden`); `first_blocker` skips a hidden planet right after the shooter/target check, in Python and C++ alike.
+- `_k2_python_candidates(ships)` → context `python_candidates`: ships whose class `_k2_flag` calls overridden (IsDead and IsHidden are now in the ObjectClass / ShipClass roles). `first_blocker` throws `NeedPython` at such a candidate (at its IsDead), so the ASK decides.
+- `view_offsets`: an entry for every set a ship of the step is in, and `-1` → None (`_K2PhaserContext`). Before, only the viewing set had one; a target with an instance in an unviewed set is now traced natively too.
+- All three are read at begin and again after any non-pure record (`_K2PhaserContext.python_ran`); the view offsets also when the viewing set changed.
+
+Candidate rows: the ASK answer names a ship by handle, so in `BANK_FOR` (once a bank has a target and goes on, before any record for it) a session ship with no live row hands the bank to Python (`bank_fallback`, `StaleRow`). Re-checked only after a record (only a record's Python can free a row).
+
+Counts: `k2_ask_queries["blocker"]`, `k2_blocked` = `{"ship", "planet"}`.
+
+Tests: `tests/unit/test_native_k2_blocker.py` (native vs Python), `tests/unit/test_native_k2_bindings.py::test_blocker_ask_record_and_answers` (layouts), `native/tests/combat/k2_beams_test.cc` `K2Blocker.*`, `tests/host/test_native_k2_differential.py` (real fights: friendly ships take blocked beams).
 
 ---
 
@@ -921,7 +958,7 @@ No test pins by name: `take_dwell`, `accumulate_dwell` (except via oracle timing
   - the native trace (≈0.17 ms a tick at ~10 µs each in Debug, unless `ray_trace.cc` is optimised, which changes its float results; see the trace paragraph in §8.1).
 - On these shares the "own scope down by at least half" bar (§7.6.6) is plausible but not certain. This is inferred and needs a paired capture.
 
-**Since built natively (phase 6 follow-ups 1 and 4).** The render rebuild below is `native/src/combat/src/beam_feed.cc`, driven by `native_combat.beam_feed` from `host_loop._push_combat_render_data`. **There is no Python copy:** follow-up 4 recorded the Python builders' output as render goldens (`tests/fixtures/render_goldens/`) and deleted them, so the goldens (`tests/host/test_native_beam_feed.py`, plus the edge cases in `test_native_torpedo_feed.py`) are the feed's oracle. Re-recording a golden (Mark's ruling, 2026-11-07) is `UPDATE_RENDER_GOLDEN=native` with `RENDER_GOLDEN_RULING=<where the ruling is recorded>`, which records from the native feeds and writes that reference into the golden's header. It is run only by Mark, or by a session acting on his ruling for a deliberate visual change, once that ruling is written in the plan or the SDD ledger. It is never run to turn a failing golden test green without such a ruling: then the moved frame is a regression in the feed. `UPDATE_RENDER_GOLDEN=1` (the Python builders) always refuses. The procedure is in `tests/helpers/render_golden.py`. Nothing stands the feed down: `DAUNTLESS_NATIVE_COMBAT=0` and `DAUNTLESS_NATIVE_AUDIT=1` both draw natively, and the only early return is host_io with no native module. An item the mirror cannot answer is skipped, counted by reason on the frame profiler's `beam feed:` line (`native_combat.beam_feed_counts`), and the rest of the frame drawn. An item is one ship's walk or one bank's pair; the reasons (`beam_feed.h` `BeamSkip`, then Python's own) are: `ship_row` (a ship with no Object row, counted once per walk), `not_ship_class`, `target_row` (a bank target with no row), `containing_set` (an unnamed set), `frames` (a set missing from the frames table), `part_stale` (a part slot stale past the refresh the feed runs first), `mount_unknown`, `colour_unset` (an outer shell / inner core colour unset), `shields` (a non-ShipClass target with a real `GetShields`; one whose `GetShields` is the stub is unshielded, as `combat.shields_block` answers it), `geometry` (any other geometry refusal), `error` (any other exception), and `view_row` (the viewed set has no Set row: nothing drawn that frame). What the render rebuild reads, as first mapped from the deleted Python builder (HL:2416 then, `cb.render_data`), once per frame for every firing bank:
+**Since built natively (phase 6 follow-ups 1 and 4).** The render rebuild below is `native/src/combat/src/beam_feed.cc`, driven by `native_combat.beam_feed` from `host_loop._push_combat_render_data`. **There is no Python copy:** follow-up 4 recorded the Python builders' output as render goldens (`tests/fixtures/render_goldens/`) and deleted them, so the goldens (`tests/host/test_native_beam_feed.py`, plus the edge cases in `test_native_torpedo_feed.py`) are the feed's oracle. Re-recording a golden (Mark's ruling, 2026-11-07) is `UPDATE_RENDER_GOLDEN=native` with `RENDER_GOLDEN_RULING=<where the ruling is recorded>`, which records from the native feeds and writes that reference into the golden's header. It is run only by Mark, or by a session acting on his ruling for a deliberate visual change, once that ruling is written in the plan or the SDD ledger. It is never run to turn a failing golden test green without such a ruling: then the moved frame is a regression in the feed. `UPDATE_RENDER_GOLDEN=1` (the Python builders) always refuses. The procedure is in `tests/helpers/render_golden.py`. Nothing stands the feed down: `DAUNTLESS_NATIVE_COMBAT=0` and `DAUNTLESS_NATIVE_AUDIT=1` both draw natively, and the only early return is host_io with no native module. An item the mirror cannot answer is skipped, counted by reason on the frame profiler's `beam feed:` line (`native_combat.beam_feed_counts`), and the rest of the frame drawn. An item is one ship's walk or one bank's pair; the reasons (`beam_feed.h` `BeamSkip`, then Python's own) are: `ship_row` (a ship with no Object row, counted once per walk), `not_ship_class`, `target_row` (a bank target with no row), `containing_set` (an unnamed set), `frames` (a set missing from the frames table), `part_stale` (a part slot stale past the refresh the feed runs first), `mount_unknown`, `colour_unset` (an outer shell / inner core colour unset), `shields` (a non-ShipClass target with a real `GetShields`; one whose `GetShields` is the stub is unshielded, as `combat.shields_block` answers it), `geometry` (any other geometry refusal), `error` (any other exception), `blocker` (NOT a dropped item: a phaser pair whose blocker check, `first_blocker`, needed Python, drawn to its target's end; see below), and `view_row` (the viewed set has no Set row: nothing drawn that frame). **The blocker (spec `2026-11-11-beam-blocking-design.md`):** for a phaser whose ship and target share one set, `beam_endpoint` calls `beam_block.h` `first_blocker` over the feed's ships (host_loop's per-tick list, every ShipClass in every set) and `_k2_planet_rows` (with `session.planet_instances`), with `contact_dist` = |the target endpoint − the emitter|; a blocker's shield bubble entry, else its point, is the drawn end, where the damage lands. Tractors and cross-set pairs are never blocked. What the render rebuild reads, as first mapped from the deleted Python builder (HL:2416 then, `cb.render_data`), once per frame for every firing bank:
 
 - the aim point;
 - the strip;

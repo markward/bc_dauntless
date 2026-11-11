@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "dauntless/combat/beam_block.h"
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/damage.h"
 #include "dauntless/combat/k1_fire_control.h"
@@ -131,6 +132,53 @@
 // attribute shadowing a method the pulse reads (a bank's GetMaxDamage) is
 // not obeyed (spec Part A): the pulse reads the mirrored value.
 //
+// THE BLOCKER (beam blocking, spec 2026-11-11-beam-blocking-design.md §5;
+// host_loop._phaser_step_bank, after `bubble_entry`). With an aim unit, once
+// the target's contact (impact point, bubble entry) is known, the walk asks
+// beam_block.h's first_blocker -- the C++ port of beam_blockers.
+// first_blocker -- over the session's ships (Python's `ships_list`, which
+// beam_blockers.step_ships() holds, in list order) and the context's
+// planets, with the contact distance |bubble - emitter| when the bubble is
+// set, else |impact - emitter| (beam_blockers.contact_distance). Its
+// NeedPython is the ASK `blocker`. Then:
+//   - nothing in the way: the target's contact, as before;
+//   - a planet: no contact, no rest, no pulse. The dwell the bank took this
+//     tick stays taken (its writes are logged) and is dropped, as the
+//     Python's `return`; on to the next bank;
+//   - a ship: it takes the contact. The contact's target becomes its
+//     handle; dist, impact point, normal and bubble entry become the
+//     blocker's; the tier "mesh" when it has a normal, else "sphere" (the
+//     tier only tells Python how to rebuild the point's identity: a
+//     blocker's point is never the fallback or the origin) -- except that a
+//     blocker met at its bubble with no mesh normal has the bubble entry AS
+//     its point (first_blocker's `point = b`), so its records say "bubble"
+//     (K2Contact::point_is_bubble; a native pulse's HIT_PRESENT carries
+//     shield_point IS point, damage.h H14); shields_block is evaluated
+//     again, for the blocker (natively, else the ASK shields_block). The damage pulse (dmg_target_representable
+//     on the blocker), the rest and the CONTACT record then run unchanged on
+//     these values. target_pos and aim_unit stay the intended target's: they
+//     are the aim ray's, and the bank's own state (K1, the dwell) is judged
+//     against the intended target.
+// CANDIDATE ROWS. The blocker ASK's answer names a ship by its handle, so a
+// bank whose blocker question may reach Python needs every candidate to
+// have a live row: in BANK_FOR, once a bank has a target and goes on
+// (before any record for it), a session ship with no live row hands the
+// bank to Python (bank_fallback, StaleRow; checked again only after a
+// record, since only a record's Python can free a row). An answer naming a
+// handle with no live row is then a protocol break (std::logic_error).
+// CLASS OVERRIDES. first_blocker reads from the mirror what the Python
+// calls (IsDead, IsHidden, GetWorldLocation, GetShields, ...); IsHidden is
+// in the ObjectClass and ShipClass roles for it (WHAT THE DRIVER CHECKS). The driver
+// lists, in the context's python_candidates, every step ship whose class the
+// K2 class flags call overridden (a name of its ObjectClass / ShipClass role
+// resolving outside the engine package, or patched since K2 first saw the
+// class: native_combat._k2_python_candidates); first_blocker throws
+// NeedPython at such a candidate where the Python first calls it (IsDead),
+// so the bank's whole question is the ASK's. A planet's IsHidden is not
+// read from the mirror: the driver calls it for every planet row
+// (BeamPlanet::hidden, _k2_planet_rows' last field), so a hidden planet is
+// skipped exactly where the Python skips it, rowed or not.
+//
 // RECORDS (K2Kind, in combat_k2_kinds() order). The Python layouts, as the
 // binding builds them (handles are mirror handles, -1 = None; xyz = a
 // 3-tuple of floats). Every record ends (..., writes).
@@ -156,7 +204,10 @@
 //                  writes)
 //        tier is "mesh", "sphere", "fallback" (the impact point IS
 //        target_pos) or "origin" (the impact point IS emitter_pos), so Python
-//        rebuilds Python's object identity. shields_block is None when the
+//        rebuilds Python's object identity. A blocker's contact (THE
+//        BLOCKER) names the blocker as `target`, with its dist, points and
+//        a "mesh", "sphere" or "bubble" tier ("bubble": the impact point IS
+//        bubble_xyz's point); target_pos and aim_unit stay the aim's. shields_block is None when the
 //        loop did not evaluate it (aim_unit None) or Python answered it (an
 //        ASK; K2Contact::shields_asked). Python: _phaser_contact, i.e.
 //        combat.apply_hit(...) if the damage is > 0. Only a damage pulse
@@ -227,6 +278,18 @@
 //                                         "sphere"
 //            when the target's set has no entry in the context's view-offset
 //            table (a direction and an instance being present).
+//        blocker      (ship, target, emitter_xyz, aim_unit_xyz, contact_dist)
+//                                      b = beam_blockers.first_blocker(
+//                                      ship, target, TGPoint3(*emitter_xyz),
+//                                      TGPoint3(*aim_unit_xyz), contact_dist,
+//                                      beam_blockers.step_ships(),
+//                                      beam_blockers.step_planets(),
+//                                      ship_instances)
+//                                      -> None, ("planet", b.dist) or
+//                                      ("ship", Object handle of b.obj,
+//                                       b.dist, (b.point xyz), normal_xyz or
+//                                       None, bubble_xyz or None, b.tier)
+//            when the native first_blocker throws NeedPython (THE BLOCKER).
 //        bank_step    (ship, system, i) the loop body for
 //                                      `bank = sys_.GetWeapon(i)` (from
 //                                      `if bank is None: continue` to the
@@ -277,8 +340,9 @@
 //   - the bank_step ASK: the ship and the system, before _phaser_step_bank;
 //   - RUN_PYTHON names its ship by list index (the list holds it).
 // The other ASKs (is_dead, can_detect, aim_point, shields_block, bubble,
-// resolve_hit) run only pure Python: nothing they run can free a row, so they
-// pin only what they name. A handle is mapped back through that pin set, then
+// resolve_hit, blocker) run only pure Python: nothing they run can free a
+// row, so they pin only what they name (the blocker ASK also pins the ship
+// its answer names). A handle is mapped back through that pin set, then
 // the weak registry. A NEW record kind (or ASK) that runs non-pure Python
 // must name every object Python's locals would hold there, or a row freed
 // mid-walk (weakref.finalize -> unregister) leaves a handle a later record
@@ -339,11 +403,11 @@
 //       ShieldSubsystem: HasShields, IsOn, IsDisabled, IsDestroyed;
 //       CloakingSubsystem: IsCloaking, IsDecloaking;
 //       ShipSubsystem: the subsystem names;
-//       ShipClass: IsDead, GetWorldLocation, GetWorldRotation,
+//       ShipClass: IsDead, IsHidden, GetWorldLocation, GetWorldRotation,
 //         GetContainingSet, GetScale, GetRadius, GetBaseRadius,
 //         GetShields, GetPhaserSystem, GetTargetSubsystem, is_using_target_offset,
 //         GetTargetOffsetTG, GetCloakingSubsystem;
-//       ObjectClass: IsDead, GetWorldLocation, GetWorldRotation,
+//       ObjectClass: IsDead, IsHidden, GetWorldLocation, GetWorldRotation,
 //         GetContainingSet, GetScale, GetRadius, GetBaseRadius,
 //         GetShields;
 //   - any class with a row (of those) resolving a name of its role to a
@@ -426,6 +490,7 @@ enum class K2Query : int32_t {
     bubble,
     resolve_hit,
     bank_step,
+    blocker,
     kCount
 };
 const char* k2_query_name(K2Query q);
@@ -451,6 +516,9 @@ struct K2Contact {
     std::optional<bool> shields_block;  // nullopt: not evaluated (no aim_unit)
     bool shields_asked = false;  // shields_block came from an ASK answer
     double flush_dwell = 0.0;
+    // hit.point IS `bubble` (THE BLOCKER: a blocker met at its bubble with
+    // no mesh normal); the records' tier string is then "bubble".
+    bool point_is_bubble = false;
 };
 
 // Why a damage pulse came back as a CONTACT record (THE DAMAGE PULSE).
@@ -510,13 +578,19 @@ struct K2Rest {
 //   aim_point: point, flag (= the locked subsystem was not None);
 //   bubble: none (Python None) or point;
 //   resolve_hit: point, normal, tier;
-//   bank_step: nothing.
+//   bank_step: nothing;
+//   blocker: blocker_kind (0 none, 1 ship, 2 planet); a planet's dist; a
+//     ship's handle, dist, point, normal and bubble (THE BLOCKER).
 struct K2Answer {
     bool flag = false;
     bool none = false;
     Vec3 point{0, 0, 0};
     std::optional<Vec3> normal;
     ResolvedHit::Tier tier = ResolvedHit::Tier::Fallback;
+    int64_t handle = -1;
+    int32_t blocker_kind = 0;
+    double dist = 0.0;
+    std::optional<Vec3> bubble;
 };
 
 // What a damage pulse reads that the mirror does not hold (THE DAMAGE
@@ -545,16 +619,16 @@ struct K2Context {
     // other value never equals a target, as an unregistered player).
     int64_t player = -1;
     // frames.view_offset(set) by Set handle: nullopt = None (no shift). A
-    // target whose set has no entry makes the trace ASK resolve_hit.
+    // target whose set has no entry makes the trace ASK resolve_hit (and a
+    // blocker candidate with an instance, the ASK blocker). The K2 driver
+    // sends an entry for every set a ship of the step is in, and -1 (no
+    // set: None).
     std::unordered_map<int64_t, std::optional<Vec3>> view_offsets;
     // ship_instances by target Object handle. Absent (or None) is "no
     // instance": the fallback point. `bad` is a value that is not an
     // InstanceId (pybind would raise inside _resolve_hit_point's try): the
     // sphere tier, as a stale id.
-    struct Iid {
-        bool bad = false;
-        InstanceId id{};
-    };
+    using Iid = InstanceRef;  // beam_trace.h (beam_block.h needs it too)
     std::unordered_map<int64_t, Iid> iids;
     // The trace: installed_trace_hooks(), or empty when host_io._h is None.
     TraceHooks hooks;
@@ -562,6 +636,12 @@ struct K2Context {
     std::unordered_set<int64_t> python_ships;
     // THE DAMAGE PULSE.
     K2PulseCtx pulse;
+    // THE BLOCKER: every Planet (a Sun included) of the sets the step's
+    // ships are in, each set's in its object order (beam_block.h
+    // BeamPlanet; native_combat._k2_planet_rows), and the candidates only
+    // Python may decide (CLASS OVERRIDES).
+    std::vector<BeamPlanet> planets;
+    std::unordered_set<int64_t> python_candidates;
 };
 
 class K2Kernel {
@@ -627,6 +707,9 @@ public:
         int64_t native_pulses = 0;
         std::array<int64_t, static_cast<size_t>(K2PulseWhy::kCount)>
             pulse_why{};
+        // THE BLOCKER: contacts taken by a ship in the way, and banks
+        // stopped by a planet (natively or through the ASK).
+        int64_t blocked_ship = 0, blocked_planet = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

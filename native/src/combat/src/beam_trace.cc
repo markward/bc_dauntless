@@ -88,6 +88,30 @@ float narrow_like_pybind(double x) {
     return static_cast<float>(x);
 }
 
+// ── combat.py:111-130, the mesh tier of _resolve_hit_point ─────────────────
+
+std::optional<std::pair<Vec3, Vec3>> trace_instance_point(
+    const TraceHooks& hooks, InstanceId iid, const Vec3& origin,
+    const Vec3& dir, double max_dist, const std::optional<Vec3>& view_offset) {
+    // combat.py:115-116 o = frames.shifted(ray_origin, to_view)
+    // frames.shifted (frames.py:166-177): `p` ITSELF when off is None or
+    // zero (detail::is_zero_offset), else p + sign * off per axis.
+    const bool shift = view_offset && !is_zero_offset(*view_offset);
+    const Vec3 o = shift ? shifted(origin, *view_offset, 1.0) : origin;
+    // combat.py:117-125: any raise is `result = None`.
+    std::optional<MeshResult> result;
+    try {
+        result = host_io_ray_trace_mesh(hooks, iid, o, dir, max_dist);
+    } catch (const std::exception&) {
+        result = std::nullopt;
+    }
+    if (!result) return std::nullopt;
+    // combat.py:127-130: the hit moved back out by -1.0 * to_view.
+    const Vec3 p =
+        shift ? shifted(result->point, *view_offset, -1.0) : result->point;
+    return std::make_pair(p, result->normal);
+}
+
 // ── combat.py:86 _resolve_hit_point (K2M 1.4) ───────────────────────────────
 
 ResolvedHit resolve_hit_point(const Mirror& m, const TraceHooks& hooks,
@@ -100,24 +124,10 @@ ResolvedHit resolve_hit_point(const Mirror& m, const TraceHooks& hooks,
     // with NO sphere tier (K2M 8.3.6).
     if (!dir) return {Tier::Fallback, fallback_point, std::nullopt};
     if (!iid) return {Tier::Fallback, fallback_point, std::nullopt};
-    // combat.py:115-116 o = frames.shifted(ray_origin, to_view)
-    // frames.shifted (frames.py:166-177): `p` ITSELF when off is None or
-    // zero (detail::is_zero_offset), else p + sign * off per axis.
-    const bool shift = view_offset && !is_zero_offset(*view_offset);
-    const Vec3 o = shift ? shifted(origin, *view_offset, 1.0) : origin;
-    // combat.py:117-125: any raise degrades to the sphere tier.
-    std::optional<MeshResult> result;
-    try {
-        result = host_io_ray_trace_mesh(hooks, *iid, o, *dir, max_dist);
-    } catch (const std::exception&) {
-        result = std::nullopt;
-    }
-    // combat.py:127-130: the hit moved back out by -1.0 * to_view.
-    if (result) {
-        const Vec3 p =
-            shift ? shifted(result->point, *view_offset, -1.0) : result->point;
-        return {Tier::Mesh, p, result->normal};
-    }
+    // combat.py:111-130: the mesh tier.
+    if (const auto mesh = trace_instance_point(hooks, *iid, origin, *dir,
+                                               max_dist, view_offset))
+        return {Tier::Mesh, mesh->first, mesh->second};
     // combat.py:133-141 (sphere_fallback is True for every phaser call).
     const Vec3 center = world_location(m, obj(m, target));
     // hasattr(ship, "GetRadius"): every Object row is an ObjectClass.

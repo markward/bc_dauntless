@@ -88,6 +88,7 @@ from engine.appc import (
     hit_vfx,
     particles,
     ship_death,
+    beam_blockers,
     camera_shake,
     hit_feedback,
     combat,
@@ -1294,6 +1295,19 @@ def _phaser_step_bank(ship, sys_, i: int, dt: float, ship_instances) -> None:
                                    dist * 1.5)
         if (aim_unit is not None and combat.shields_block(target))
         else None)
+    if aim_unit is not None:
+        # The first object in the beam's path takes the contact (spec 5).
+        b = beam_blockers.first_blocker(
+            ship, target, emitter_pos, aim_unit,
+            beam_blockers.contact_distance(emitter_pos, impact_point,
+                                           bubble_entry),
+            beam_blockers.step_ships(), beam_blockers.step_planets(),
+            ship_instances)
+        if b is not None:
+            if b.kind == "planet":
+                return
+            target, dist, impact_point, impact_normal, bubble_entry = (
+                b.obj, b.dist, b.point, b.normal, b.bubble)
     _phaser_contact(ship, sys_, bank, target, dist, dt, flush_dwell, level,
                     impact_point, impact_normal, bubble_entry, ship_instances)
 
@@ -1400,7 +1414,8 @@ def _advance_combat(*args, **kwargs) -> None:
 
 def _advance_combat_step(ships, dt: float, ship_instances=None,
                          ship_emitters=None, player=None,
-                         push_render_data: bool = True) -> None:
+                         push_render_data: bool = True,
+                         planet_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     `push_render_data=False` leaves the renderer push to the caller
@@ -1510,22 +1525,33 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
     with frame_profiler.scope("cb.phasers"):
-        if not (_native_combat.enabled()
-                and _native_combat.k2_phasers(ships_list, dt, ship_instances)):
-            for ship in ships_list:
-                _phaser_step_ship(ship, dt, ship_instances)
+        # The ships and planets a beam may be stopped by (beam_blockers).
+        beam_blockers.begin_step(ships_list, planet_instances or {})
+        try:
+            if not (_native_combat.enabled()
+                    and _native_combat.k2_phasers(ships_list, dt,
+                                                  ship_instances,
+                                                  planet_instances)):
+                for ship in ships_list:
+                    _phaser_step_ship(ship, dt, ship_instances)
+        finally:
+            beam_blockers.end_step()
 
     if push_render_data:
         _push_combat_render_data(ships_list, ship_instances=ship_instances,
-                                 ship_emitters=ship_emitters, player=player)
+                                 ship_emitters=ship_emitters, player=player,
+                                 planet_instances=planet_instances)
 
 
 def _push_combat_render_data(ships_list, *, ship_instances=None,
-                             ship_emitters=None, player=None) -> None:
+                             ship_emitters=None, player=None,
+                             planet_instances=None) -> None:
     """Build and push the per-frame combat VFX feeds (torpedoes, dynamic
     lights, shockwaves, hit VFX, particles, phaser and tractor beams), every
     world position in RENDER space (frames.to_render) -- so it runs after
-    the render origin is set for the frame (_apply_render_origin)."""
+    the render origin is set for the frame (_apply_render_origin).
+    `planet_instances` (session.planet_instances) lets a drawn phaser beam
+    end on a planet's mesh, as the damage step's beam_blockers does."""
     # Per-frame VFX descriptor lists route through the host_io façade, which
     # no-ops when the native module is absent (headless). The hit/damage
     # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
@@ -1544,8 +1570,10 @@ def _push_combat_render_data(ships_list, *, ship_instances=None,
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
         host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
         # Both beam feeds natively from the mirror (native_combat.
-        # beam_feed), as the torpedoes: no Python fallback.
-        _native_combat.beam_feed(ships_list, ship_instances)
+        # beam_feed), as the torpedoes: no Python fallback. A phaser beam
+        # ends on the first object in its path, where the damage lands.
+        _native_combat.beam_feed(ships_list, ship_instances,
+                                 planet_instances=planet_instances)
 
 
 def _build_ship_emitter_cache(ship, specs_of=None):
@@ -7666,6 +7694,7 @@ def reset_mission_state(renderer=None) -> None:
     """
     from engine.appc import ship_lifecycle
     ship_lifecycle.reset()
+    beam_blockers.end_step()
     # The first pump after a swap is a full contact rebuild.
     contact_refresh.reset()
     _hud_change_state.clear()
@@ -11121,6 +11150,7 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
                     ship_instances=(session.ship_instances if session is not None else None),
                     ship_emitters=(session.ship_emitters if session is not None else None),
                     player=player,
+                    planet_instances=(session.planet_instances if session is not None else None),
                     # Pushed after the camera, once the render origin is
                     # set (_push_combat_render_data below).
                     push_render_data=False,
@@ -13486,7 +13516,8 @@ def run(mission_name: Optional[str] = None,
                     _ships_this_tick,
                     ship_instances=(session.ship_instances if session is not None else None),
                     ship_emitters=(session.ship_emitters if session is not None else None),
-                    player=player)
+                    player=player,
+                    planet_instances=(session.planet_instances if session is not None else None))
 
             frame_profiler.mark("spv")
             # --- Ship Property Viewer override (dev-only) ---

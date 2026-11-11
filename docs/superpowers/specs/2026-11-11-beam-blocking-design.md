@@ -1,6 +1,6 @@
 # Beams stop on the first thing in their path — design
 
-Status: design, not built. 2026-11-11.
+Status: built on feat/beam-blocking (2026-11-11); live-verified by Mark 2026-11-11 (fly through a beam, fire past an ally, fire at a ship behind a planet). Perf measured: SIG-229 in perf-register.md.
 
 ## 1. Intent
 
@@ -46,9 +46,12 @@ Beams are the odd one out.
    `ET_FRIENDLY_FIRE_GAME_OVER`, just as in BC. Any other script listening
    to `ET_WEAPON_HIT` sees the blocker get hit.
 5. It works the same with `DAUNTLESS_NATIVE_COMBAT=0` (the Python K2 copy) as
-   on the native path, proven by the existing native-on vs native-off
-   differential (`tests/integration/test_native_combat_step_differential.py`)
-   on a scene with a blocker. (The runtime audit, `DAUNTLESS_NATIVE_AUDIT=1`,
+   on the native path, proven by `tests/unit/test_native_k2_blocker.py`
+   (seeded blocker scenes, native vs Python compared with `==`) and
+   `tests/host/test_native_k2_differential.py` (real meshes; about 2,000
+   blocked contacts in its Python arm). `test_native_combat_step_differential.py`
+   is NOT that proof: it is unchanged, and headless `combat_stress` has no
+   blocker. (The runtime audit, `DAUNTLESS_NATIVE_AUDIT=1`,
    runs `cb.phasers` wholly in Python and compares mirror rows, not kernel
    outputs, so it has nothing to say about the blocker choice; no new audit
    machinery is in scope.)
@@ -141,6 +144,10 @@ the blocker contact point is the same kind of point the target would get:
    (`projectiles.py` ~1015-1055: trace back from the bubble, then the sphere
    entry, then the bubble point). (My call; check against BC's `TestHit`
    once the clean-room reference is reachable.)
+   **A target inside a friendly's bubble** (an enemy hugging a friendly
+   starbase) cannot be beamed from outside: the friendly's bubble blocks and
+   takes the pulses, toward the friendly-fire tally. Mark ruled 2026-11-11 to
+   keep this: it is how shields work in Star Trek.
 3. **Planet / Sun:** a ray–sphere entry with radius `collisions.world_radius`
    (`GetRadius()`, the drawn radius), NOT the collision `contact_radius`
    (0.8 × R for planets) and NOT `SetAtmosphereRadius` (gameplay-only).
@@ -267,9 +274,11 @@ least one test exercises a real mesh.
    through the real SDK handler.
 9. **Line clears:** once the blocker leaves the line, the next pulse lands
    on the target.
-10. **Native = Python:** the native-on vs native-off differential
-    (`test_native_combat_step_differential.py`), seeded, is byte-identical on
-    a scene with a blocker.
+10. **Native = Python:** native on and off are byte-identical on seeded
+    blocker scenes (`tests/unit/test_native_k2_blocker.py`: ship, planet,
+    hidden planet, two banks, the ASK paths, an unshielded pair) and on real
+    meshes (`tests/host/test_native_k2_differential.py`, about 2,000 blocked
+    contacts in its Python arm).
 12. **Hidden ship:** a hidden ship in the line does not block.
 11. **Drawn beam:** the beam feed's endpoint equals the damage contact point
     for a blocked bank.
@@ -301,3 +310,53 @@ says "not live-verified".
 - Whether the broadphase reuses `sweep_candidates` or a sibling.
 - Test file layout, and the CLAUDE.md row (add one; this is a fidelity
   behaviour a future reader will look for).
+
+## 10. Decisions made while planning and building
+
+- **Planet surface** is a mesh trace on the planet's renderer instance, so the
+  beam ends on the drawn surface. With no instance (headless) it is a
+  ray-sphere entry about `GetWorldLocation()` with `world_radius`, which can
+  sit a few GU off the drawn surface; never seen in a rendered game. Planet
+  broadphase bound is `world_radius * 1.02` (`PLANET_BOUND_SLACK`).
+- **A planet-blocked pulse is lost**: the dwell was consumed by the bank and
+  nothing receives it. Planets stop silently (no hit event).
+- **A shielded blocker's hull point** is the mesh tier along the same ray if it
+  hits, else the bubble point itself (normal None). The torpedo pattern's
+  inflated-sphere tier is skipped. The tier is reported as "mesh", "sphere" or
+  "bubble".
+- **Candidate order** is deterministic (`ships_list` order, then planets in
+  `planet_instances` order); a candidate wins only when strictly nearer, so the
+  target wins ties.
+- **Cross-set pairs are never blocked**: candidates are same-set only.
+  Hidden and dead objects never block (`IsDead`/`_dead` read live per
+  candidate). Tractors are unchanged: only phaser banks block.
+- **Row-less ship**: a session ship with no mirror row sends the bank to Python
+  (`stale_row`). Class overrides of `IsDead`/`IsHidden` are decided in Python,
+  not natively.
+- **NeedPython**: in damage it becomes the `blocker` ASK; in the drawn feed the
+  pair is drawn with today's unblocked endpoint and counted as BeamSkip
+  "blocker". Known cost: one row-less or class-flagged ship anywhere in the
+  ship list makes every phaser pair draw unblocked that frame, while damage
+  asks Python, so the two can disagree for that frame. Whether production ever
+  has such ships is unchecked.
+- **Tests**: the spec's asset-backed tests 3 and 11 became fake-trace tests
+  (`install_trace_hooks` in gtest, a monkeypatched `host_io.ray_trace_mesh` in
+  Python); real meshes are covered by the live check.
+- **The native = Python proof** is `tests/unit/test_native_k2_blocker.py`
+  plus `tests/host/test_native_k2_differential.py` (real meshes; 2,017
+  blocked contacts through the Python `first_blocker` in one run), not
+  `test_native_combat_step_differential.py` (unchanged; headless
+  `combat_stress` cannot block). An earlier "native 20 hits vs Python 9"
+  reading in `test_native_k2_blocker.py` was the harness, not the kernel:
+  its two arms shared `App.g_kSystemWrapper`'s RNG, the module `random` and
+  the `ship_death` / `object_lifetime` registries. It reproduces at the base
+  commit and matches once each arm is seeded and the registries cleared
+  (`_fresh_arm`; the unshielded-pair case guards it).
+- **Hidden planets** never block either: `first_blocker` skips
+  `planet.IsHidden()` after the shooter/target check, and the native side
+  reads the same answer from the planet row (`_k2_planet_rows`' `hidden`).
+- **Golden**: Mark re-recorded the `beam_scene` render golden on 2026-11-11;
+  drawn beams now end on blockers from frame 19.
+- **Live check**: done by Mark 2026-11-11 (fly through a beam between two AI ships, fire past an
+  ally, fire at a ship behind a planet). Perf: SIG-229 (C-545..C-552), the before/after profiler capture on
+  `combat_stress` (`cb.phasers`, beam feed, `cb.render_data`).

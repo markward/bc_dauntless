@@ -156,7 +156,7 @@
    "frame": 19,
    "lights": 0,
    "phasers": 24,
-   "sha": "626df8d9b9e516802539e508e2364542fcfe30803cfb58ef87e7c6396f0438be",
+   "sha": "334a4f3d107b8407c60ca8917ffa04ce80d36ac1282a0e7644544f86c30e2309",
    "torps": 0,
    "tractors": 2
   },
@@ -180,7 +180,7 @@
    "frame": 22,
    "lights": 0,
    "phasers": 24,
-   "sha": "2cdced89096ed25b94513bcc078c078ffc0a4255682a8a08765c0055cc8e5fd1",
+   "sha": "08ea0b917663305bc1fed651b677ed950d607f50c1da5160ef21dcc7fe7b8007",
    "torps": 0,
    "tractors": 2
   },
@@ -468,7 +468,7 @@
    "frame": 58,
    "lights": 0,
    "phasers": 22,
-   "sha": "a9cd1982090f960c56ef5a72aa4c39e025d9367d1ce42c9729651c18afdf0b3c",
+   "sha": "7b85d5ed9abeef71285ed23dd3649fde793c898808880f2b0b8d287ae1867e92",
    "torps": 0,
    "tractors": 0
   },
@@ -476,7 +476,7 @@
    "frame": 59,
    "lights": 0,
    "phasers": 24,
-   "sha": "85c3132936cc3975b48ebe6a455abddaa185da2c5fff0261b975fe393ad4a95a",
+   "sha": "5d3e53ff3a1d9d37764790cc8cc74cd8b0a21cf440046ff4c0abd999bd8e8296",
    "torps": 0,
    "tractors": 0
   },
@@ -484,7 +484,7 @@
    "frame": 60,
    "lights": 0,
    "phasers": 24,
-   "sha": "85c3132936cc3975b48ebe6a455abddaa185da2c5fff0261b975fe393ad4a95a",
+   "sha": "5d3e53ff3a1d9d37764790cc8cc74cd8b0a21cf440046ff4c0abd999bd8e8296",
    "torps": 0,
    "tractors": 0
   },
@@ -492,7 +492,7 @@
    "frame": 61,
    "lights": 0,
    "phasers": 24,
-   "sha": "85c3132936cc3975b48ebe6a455abddaa185da2c5fff0261b975fe393ad4a95a",
+   "sha": "5d3e53ff3a1d9d37764790cc8cc74cd8b0a21cf440046ff4c0abd999bd8e8296",
    "torps": 0,
    "tractors": 0
   },
@@ -500,7 +500,7 @@
    "frame": 62,
    "lights": 0,
    "phasers": 24,
-   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "sha": "63131a2a32886020c716a41f5dbe443801117ae5c62ecfe76e72db2f546d8556",
    "torps": 0,
    "tractors": 0
   },
@@ -508,7 +508,7 @@
    "frame": 63,
    "lights": 0,
    "phasers": 24,
-   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "sha": "63131a2a32886020c716a41f5dbe443801117ae5c62ecfe76e72db2f546d8556",
    "torps": 0,
    "tractors": 0
   },
@@ -516,7 +516,7 @@
    "frame": 64,
    "lights": 0,
    "phasers": 24,
-   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "sha": "63131a2a32886020c716a41f5dbe443801117ae5c62ecfe76e72db2f546d8556",
    "torps": 0,
    "tractors": 0
   },
@@ -524,7 +524,7 @@
    "frame": 65,
    "lights": 0,
    "phasers": 24,
-   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "sha": "63131a2a32886020c716a41f5dbe443801117ae5c62ecfe76e72db2f546d8556",
    "torps": 0,
    "tractors": 0
   },
@@ -532,7 +532,7 @@
    "frame": 66,
    "lights": 0,
    "phasers": 24,
-   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "sha": "63131a2a32886020c716a41f5dbe443801117ae5c62ecfe76e72db2f546d8556",
    "torps": 0,
    "tractors": 0
   },
@@ -540,7 +540,7 @@
    "frame": 67,
    "lights": 0,
    "phasers": 24,
-   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "sha": "63131a2a32886020c716a41f5dbe443801117ae5c62ecfe76e72db2f546d8556",
    "torps": 0,
    "tractors": 0
   },
@@ -548,7 +548,7 @@
    "frame": 68,
    "lights": 0,
    "phasers": 24,
-   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "sha": "63131a2a32886020c716a41f5dbe443801117ae5c62ecfe76e72db2f546d8556",
    "torps": 0,
    "tractors": 0
   },
@@ -556,7 +556,7 @@
    "frame": 69,
    "lights": 0,
    "phasers": 24,
-   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "sha": "06eb182aa539a1736efc75539b28e6cfff28c54a05b6f3d1758e60a8f2a134cf",
    "torps": 0,
    "tractors": 0
   },
@@ -564,7 +564,7 @@
    "frame": 70,
    "lights": 0,
    "phasers": 24,
-   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "sha": "06eb182aa539a1736efc75539b28e6cfff28c54a05b6f3d1758e60a8f2a134cf",
    "torps": 0,
    "tractors": 0
   },
@@ -572,7 +572,7 @@
    "frame": 71,
    "lights": 0,
    "phasers": 24,
-   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "sha": "06eb182aa539a1736efc75539b28e6cfff28c54a05b6f3d1758e60a8f2a134cf",
    "torps": 0,
    "tractors": 0
   },
@@ -580,7 +580,7 @@
    "frame": 72,
    "lights": 0,
    "phasers": 24,
-   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "sha": "06eb182aa539a1736efc75539b28e6cfff28c54a05b6f3d1758e60a8f2a134cf",
    "torps": 0,
    "tractors": 0
   },
@@ -588,7 +588,7 @@
    "frame": 73,
    "lights": 0,
    "phasers": 24,
-   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "sha": "06eb182aa539a1736efc75539b28e6cfff28c54a05b6f3d1758e60a8f2a134cf",
    "torps": 0,
    "tractors": 0
   },
@@ -596,7 +596,7 @@
    "frame": 74,
    "lights": 0,
    "phasers": 24,
-   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "sha": "06eb182aa539a1736efc75539b28e6cfff28c54a05b6f3d1758e60a8f2a134cf",
    "torps": 0,
    "tractors": 0
   },
@@ -604,7 +604,7 @@
    "frame": 75,
    "lights": 0,
    "phasers": 24,
-   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "sha": "06eb182aa539a1736efc75539b28e6cfff28c54a05b6f3d1758e60a8f2a134cf",
    "torps": 0,
    "tractors": 0
   },
@@ -612,7 +612,7 @@
    "frame": 76,
    "lights": 0,
    "phasers": 24,
-   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "sha": "be9c5c6ab3ff078073d4a27c18886aa5164ed33ca545b0b19b6163c33723fba2",
    "torps": 0,
    "tractors": 0
   },
@@ -620,7 +620,7 @@
    "frame": 77,
    "lights": 0,
    "phasers": 24,
-   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "sha": "be9c5c6ab3ff078073d4a27c18886aa5164ed33ca545b0b19b6163c33723fba2",
    "torps": 0,
    "tractors": 0
   },
@@ -628,7 +628,7 @@
    "frame": 78,
    "lights": 0,
    "phasers": 24,
-   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "sha": "be9c5c6ab3ff078073d4a27c18886aa5164ed33ca545b0b19b6163c33723fba2",
    "torps": 0,
    "tractors": 0
   },
@@ -636,7 +636,7 @@
    "frame": 79,
    "lights": 0,
    "phasers": 24,
-   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "sha": "be9c5c6ab3ff078073d4a27c18886aa5164ed33ca545b0b19b6163c33723fba2",
    "torps": 0,
    "tractors": 0
   },
@@ -644,7 +644,7 @@
    "frame": 80,
    "lights": 0,
    "phasers": 24,
-   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "sha": "be9c5c6ab3ff078073d4a27c18886aa5164ed33ca545b0b19b6163c33723fba2",
    "torps": 0,
    "tractors": 0
   },
@@ -652,7 +652,7 @@
    "frame": 81,
    "lights": 0,
    "phasers": 26,
-   "sha": "df69ff0058c4b58e4bc4b9cf666a759e83f0f4423043cb0a1bfd76fa013c6d5b",
+   "sha": "0db7a79cf4bad6e34301984a691ec44798bc59b4952304df2c0e2f47e75ac1c1",
    "torps": 0,
    "tractors": 0
   },
@@ -660,7 +660,7 @@
    "frame": 82,
    "lights": 0,
    "phasers": 24,
-   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "sha": "be9c5c6ab3ff078073d4a27c18886aa5164ed33ca545b0b19b6163c33723fba2",
    "torps": 0,
    "tractors": 0
   },
@@ -668,7 +668,7 @@
    "frame": 83,
    "lights": 0,
    "phasers": 24,
-   "sha": "5881d725486aa065efa05aa0f30f166c2ff5650f25b10dfd5c67cf199bdde039",
+   "sha": "763d12f3b5b67e93e207510c7db77d1cc88de28d59bf1744af044c2fed9263f0",
    "torps": 0,
    "tractors": 0
   },
@@ -676,7 +676,7 @@
    "frame": 84,
    "lights": 0,
    "phasers": 24,
-   "sha": "5881d725486aa065efa05aa0f30f166c2ff5650f25b10dfd5c67cf199bdde039",
+   "sha": "763d12f3b5b67e93e207510c7db77d1cc88de28d59bf1744af044c2fed9263f0",
    "torps": 0,
    "tractors": 0
   },
@@ -684,7 +684,7 @@
    "frame": 85,
    "lights": 0,
    "phasers": 24,
-   "sha": "97be8794dbe2adcbefff825aacae9ec57bb8d2c5d9fa4219c0e42d6d4618058e",
+   "sha": "b5defebd97eb6adff42962975df7e2dca40fdb3a6cfa71bfc55f32fc5fb7d825",
    "torps": 0,
    "tractors": 0
   },
@@ -692,7 +692,7 @@
    "frame": 86,
    "lights": 0,
    "phasers": 24,
-   "sha": "97be8794dbe2adcbefff825aacae9ec57bb8d2c5d9fa4219c0e42d6d4618058e",
+   "sha": "b5defebd97eb6adff42962975df7e2dca40fdb3a6cfa71bfc55f32fc5fb7d825",
    "torps": 0,
    "tractors": 0
   },
@@ -700,7 +700,7 @@
    "frame": 87,
    "lights": 0,
    "phasers": 24,
-   "sha": "97be8794dbe2adcbefff825aacae9ec57bb8d2c5d9fa4219c0e42d6d4618058e",
+   "sha": "b5defebd97eb6adff42962975df7e2dca40fdb3a6cfa71bfc55f32fc5fb7d825",
    "torps": 0,
    "tractors": 0
   },
@@ -708,7 +708,7 @@
    "frame": 88,
    "lights": 0,
    "phasers": 26,
-   "sha": "4bf2f50c1ff04eb57db0b517e97e48a2374f0707146c12d773ba78553e9827ba",
+   "sha": "ace2e7f30a746a47f8e00eac23a2f752822e20dd3d301caa97a4b7628138b70b",
    "torps": 0,
    "tractors": 0
   },
@@ -716,7 +716,7 @@
    "frame": 89,
    "lights": 0,
    "phasers": 26,
-   "sha": "70d89105bf1525720cd55f215953a13cde06886350e9e6c110151a7440ad56d3",
+   "sha": "893f90b270540199274d7e5d8d1fadec48945052b15a6b11a55f53545b7d35ac",
    "torps": 0,
    "tractors": 0
   },
@@ -724,7 +724,7 @@
    "frame": 90,
    "lights": 0,
    "phasers": 20,
-   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "sha": "516d2087aba4a57bb7202e879e159a0b683f52a6495f8cf0fb0324d4f3a33d1a",
    "torps": 0,
    "tractors": 2
   },
@@ -732,7 +732,7 @@
    "frame": 91,
    "lights": 0,
    "phasers": 20,
-   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "sha": "516d2087aba4a57bb7202e879e159a0b683f52a6495f8cf0fb0324d4f3a33d1a",
    "torps": 0,
    "tractors": 2
   },
@@ -740,7 +740,7 @@
    "frame": 92,
    "lights": 0,
    "phasers": 20,
-   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "sha": "516d2087aba4a57bb7202e879e159a0b683f52a6495f8cf0fb0324d4f3a33d1a",
    "torps": 0,
    "tractors": 2
   },
@@ -748,7 +748,7 @@
    "frame": 93,
    "lights": 0,
    "phasers": 20,
-   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "sha": "516d2087aba4a57bb7202e879e159a0b683f52a6495f8cf0fb0324d4f3a33d1a",
    "torps": 0,
    "tractors": 2
   },
@@ -756,7 +756,7 @@
    "frame": 94,
    "lights": 0,
    "phasers": 20,
-   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "sha": "516d2087aba4a57bb7202e879e159a0b683f52a6495f8cf0fb0324d4f3a33d1a",
    "torps": 0,
    "tractors": 2
   },
@@ -764,7 +764,7 @@
    "frame": 95,
    "lights": 0,
    "phasers": 20,
-   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "sha": "516d2087aba4a57bb7202e879e159a0b683f52a6495f8cf0fb0324d4f3a33d1a",
    "torps": 0,
    "tractors": 2
   },
@@ -772,7 +772,7 @@
    "frame": 96,
    "lights": 0,
    "phasers": 20,
-   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "sha": "516d2087aba4a57bb7202e879e159a0b683f52a6495f8cf0fb0324d4f3a33d1a",
    "torps": 0,
    "tractors": 2
   },
@@ -780,7 +780,7 @@
    "frame": 97,
    "lights": 0,
    "phasers": 20,
-   "sha": "d98de2e27ee3fa95b7a2ac3a48b1e9676ab052a678a3e66eeaf5965a4e0e1d6a",
+   "sha": "d343256e32869c4b65a46fe2cc7aef9e287f8dc220d45e8e42c2d43a4b016806",
    "torps": 0,
    "tractors": 2
   },
@@ -788,7 +788,7 @@
    "frame": 98,
    "lights": 0,
    "phasers": 24,
-   "sha": "7fe891b22e35e8f721fd963a5b383cc4bb374edd62f1d68b6403074242368f9e",
+   "sha": "db34a5bac00cbb7751809bc2d06a6abbf7867bc82e31ebeb84061e88d2073694",
    "torps": 0,
    "tractors": 2
   },
@@ -796,7 +796,7 @@
    "frame": 99,
    "lights": 0,
    "phasers": 28,
-   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "sha": "bfe4231f8cef650e8a1015072df3d32054c119b3620f5f1830b1b97a5b718df9",
    "torps": 0,
    "tractors": 2
   },
@@ -804,7 +804,7 @@
    "frame": 100,
    "lights": 0,
    "phasers": 28,
-   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "sha": "bfe4231f8cef650e8a1015072df3d32054c119b3620f5f1830b1b97a5b718df9",
    "torps": 0,
    "tractors": 2
   },
@@ -812,7 +812,7 @@
    "frame": 101,
    "lights": 0,
    "phasers": 28,
-   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "sha": "bfe4231f8cef650e8a1015072df3d32054c119b3620f5f1830b1b97a5b718df9",
    "torps": 0,
    "tractors": 2
   },
@@ -820,7 +820,7 @@
    "frame": 102,
    "lights": 0,
    "phasers": 28,
-   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "sha": "bfe4231f8cef650e8a1015072df3d32054c119b3620f5f1830b1b97a5b718df9",
    "torps": 0,
    "tractors": 2
   },
@@ -828,7 +828,7 @@
    "frame": 103,
    "lights": 0,
    "phasers": 28,
-   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "sha": "bfe4231f8cef650e8a1015072df3d32054c119b3620f5f1830b1b97a5b718df9",
    "torps": 0,
    "tractors": 2
   },
@@ -836,7 +836,7 @@
    "frame": 104,
    "lights": 0,
    "phasers": 28,
-   "sha": "349ee6071a055bd5306923f1f45744a5f769cd5e918dc3d189ed6454f661bfe3",
+   "sha": "06728da2ad8889fda6413fa483af36fc02b95c0a62a4d66b5967f890635e2b5e",
    "torps": 0,
    "tractors": 2
   },
@@ -844,7 +844,7 @@
    "frame": 105,
    "lights": 0,
    "phasers": 28,
-   "sha": "349ee6071a055bd5306923f1f45744a5f769cd5e918dc3d189ed6454f661bfe3",
+   "sha": "06728da2ad8889fda6413fa483af36fc02b95c0a62a4d66b5967f890635e2b5e",
    "torps": 0,
    "tractors": 2
   },
@@ -852,7 +852,7 @@
    "frame": 106,
    "lights": 0,
    "phasers": 28,
-   "sha": "349ee6071a055bd5306923f1f45744a5f769cd5e918dc3d189ed6454f661bfe3",
+   "sha": "06728da2ad8889fda6413fa483af36fc02b95c0a62a4d66b5967f890635e2b5e",
    "torps": 0,
    "tractors": 2
   },
@@ -860,7 +860,7 @@
    "frame": 107,
    "lights": 0,
    "phasers": 32,
-   "sha": "af9f06b99378ea474369c12ea6f7338c2fc222a851e63e50533012b4f836507a",
+   "sha": "1960a2a1e81739854581890c94c50236547ec3d2f6df3873e9a7c9b952102224",
    "torps": 0,
    "tractors": 2
   },
@@ -868,7 +868,7 @@
    "frame": 108,
    "lights": 0,
    "phasers": 34,
-   "sha": "1ab518282739a683470639058dde969409c5c36813a4ed68d51ded549ea1abec",
+   "sha": "ae10e64c7ef22b83ca34b801f958884cdfbcc96294c515cac95b52e1bae479aa",
    "torps": 0,
    "tractors": 2
   },
@@ -876,7 +876,7 @@
    "frame": 109,
    "lights": 0,
    "phasers": 34,
-   "sha": "ea576a655401fd26c2927293cd7cde5c9f3ba171242906952c9bbce0fa268dac",
+   "sha": "2c6b4d172d34c3c033ecad87c680eb37567df515817c555441668a3ee682a9a1",
    "torps": 0,
    "tractors": 2
   },
@@ -884,7 +884,7 @@
    "frame": 110,
    "lights": 0,
    "phasers": 34,
-   "sha": "ea576a655401fd26c2927293cd7cde5c9f3ba171242906952c9bbce0fa268dac",
+   "sha": "2c6b4d172d34c3c033ecad87c680eb37567df515817c555441668a3ee682a9a1",
    "torps": 0,
    "tractors": 2
   },
@@ -892,7 +892,7 @@
    "frame": 111,
    "lights": 0,
    "phasers": 34,
-   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "sha": "84f50be4c2b5adb19d9e6938e9d874cb62e0df9907081a74c6eaada8b9db5479",
    "torps": 0,
    "tractors": 2
   },
@@ -900,7 +900,7 @@
    "frame": 112,
    "lights": 0,
    "phasers": 34,
-   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "sha": "84f50be4c2b5adb19d9e6938e9d874cb62e0df9907081a74c6eaada8b9db5479",
    "torps": 0,
    "tractors": 2
   },
@@ -908,7 +908,7 @@
    "frame": 113,
    "lights": 0,
    "phasers": 34,
-   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "sha": "84f50be4c2b5adb19d9e6938e9d874cb62e0df9907081a74c6eaada8b9db5479",
    "torps": 0,
    "tractors": 2
   },
@@ -916,7 +916,7 @@
    "frame": 114,
    "lights": 0,
    "phasers": 34,
-   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "sha": "84f50be4c2b5adb19d9e6938e9d874cb62e0df9907081a74c6eaada8b9db5479",
    "torps": 0,
    "tractors": 2
   },
@@ -924,7 +924,7 @@
    "frame": 115,
    "lights": 0,
    "phasers": 34,
-   "sha": "f59ec067cc602a2b3fb712d434a89ef8640d9344d1f776a9f4c35e025261b58e",
+   "sha": "cd117302c169b03a9eb0ba845588ae299ced49f731780cd899a3b9ff6682492e",
    "torps": 0,
    "tractors": 2
   },
@@ -932,7 +932,7 @@
    "frame": 116,
    "lights": 0,
    "phasers": 34,
-   "sha": "f59ec067cc602a2b3fb712d434a89ef8640d9344d1f776a9f4c35e025261b58e",
+   "sha": "cd117302c169b03a9eb0ba845588ae299ced49f731780cd899a3b9ff6682492e",
    "torps": 0,
    "tractors": 2
   },
@@ -940,7 +940,7 @@
    "frame": 117,
    "lights": 0,
    "phasers": 34,
-   "sha": "f59ec067cc602a2b3fb712d434a89ef8640d9344d1f776a9f4c35e025261b58e",
+   "sha": "cd117302c169b03a9eb0ba845588ae299ced49f731780cd899a3b9ff6682492e",
    "torps": 0,
    "tractors": 2
   },
@@ -948,7 +948,7 @@
    "frame": 118,
    "lights": 0,
    "phasers": 34,
-   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "sha": "f4dd5b6f89ed5d5fb72ad773f89805a15e576af5e1bfded5adc4ea18bc66ed02",
    "torps": 0,
    "tractors": 2
   },
@@ -956,7 +956,7 @@
    "frame": 119,
    "lights": 0,
    "phasers": 34,
-   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "sha": "f4dd5b6f89ed5d5fb72ad773f89805a15e576af5e1bfded5adc4ea18bc66ed02",
    "torps": 0,
    "tractors": 2
   },
@@ -964,7 +964,7 @@
    "frame": 120,
    "lights": 0,
    "phasers": 34,
-   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "sha": "f4dd5b6f89ed5d5fb72ad773f89805a15e576af5e1bfded5adc4ea18bc66ed02",
    "torps": 0,
    "tractors": 2
   },
@@ -972,7 +972,7 @@
    "frame": 121,
    "lights": 0,
    "phasers": 34,
-   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "sha": "f4dd5b6f89ed5d5fb72ad773f89805a15e576af5e1bfded5adc4ea18bc66ed02",
    "torps": 0,
    "tractors": 2
   },
@@ -980,7 +980,7 @@
    "frame": 122,
    "lights": 0,
    "phasers": 34,
-   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "sha": "f4dd5b6f89ed5d5fb72ad773f89805a15e576af5e1bfded5adc4ea18bc66ed02",
    "torps": 0,
    "tractors": 2
   },
@@ -988,7 +988,7 @@
    "frame": 123,
    "lights": 0,
    "phasers": 34,
-   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "sha": "f4dd5b6f89ed5d5fb72ad773f89805a15e576af5e1bfded5adc4ea18bc66ed02",
    "torps": 0,
    "tractors": 2
   },
@@ -996,7 +996,7 @@
    "frame": 124,
    "lights": 0,
    "phasers": 34,
-   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "sha": "f4dd5b6f89ed5d5fb72ad773f89805a15e576af5e1bfded5adc4ea18bc66ed02",
    "torps": 0,
    "tractors": 2
   },
@@ -1004,7 +1004,7 @@
    "frame": 125,
    "lights": 0,
    "phasers": 34,
-   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "sha": "9f82e2e889780b1d10778a67e220f9b29259733aad35bcc4ced18468317b0521",
    "torps": 0,
    "tractors": 2
   },
@@ -1012,7 +1012,7 @@
    "frame": 126,
    "lights": 0,
    "phasers": 34,
-   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "sha": "9f82e2e889780b1d10778a67e220f9b29259733aad35bcc4ced18468317b0521",
    "torps": 0,
    "tractors": 2
   },
@@ -1020,7 +1020,7 @@
    "frame": 127,
    "lights": 0,
    "phasers": 34,
-   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "sha": "9f82e2e889780b1d10778a67e220f9b29259733aad35bcc4ced18468317b0521",
    "torps": 0,
    "tractors": 2
   },
@@ -1028,7 +1028,7 @@
    "frame": 128,
    "lights": 0,
    "phasers": 34,
-   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "sha": "9f82e2e889780b1d10778a67e220f9b29259733aad35bcc4ced18468317b0521",
    "torps": 0,
    "tractors": 2
   },
@@ -1036,7 +1036,7 @@
    "frame": 129,
    "lights": 0,
    "phasers": 34,
-   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "sha": "9f82e2e889780b1d10778a67e220f9b29259733aad35bcc4ced18468317b0521",
    "torps": 0,
    "tractors": 2
   },
@@ -1044,7 +1044,7 @@
    "frame": 130,
    "lights": 0,
    "phasers": 34,
-   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "sha": "9f82e2e889780b1d10778a67e220f9b29259733aad35bcc4ced18468317b0521",
    "torps": 0,
    "tractors": 2
   },
@@ -1052,7 +1052,7 @@
    "frame": 131,
    "lights": 0,
    "phasers": 34,
-   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "sha": "9f82e2e889780b1d10778a67e220f9b29259733aad35bcc4ced18468317b0521",
    "torps": 0,
    "tractors": 2
   },
@@ -1060,7 +1060,7 @@
    "frame": 132,
    "lights": 0,
    "phasers": 34,
-   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "sha": "496f30be69fc4ec2ab216900a94a8bbec27969f852802f72399d43d783fcd433",
    "torps": 0,
    "tractors": 2
   },
@@ -1068,7 +1068,7 @@
    "frame": 133,
    "lights": 0,
    "phasers": 34,
-   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "sha": "496f30be69fc4ec2ab216900a94a8bbec27969f852802f72399d43d783fcd433",
    "torps": 0,
    "tractors": 2
   },
@@ -1076,7 +1076,7 @@
    "frame": 134,
    "lights": 0,
    "phasers": 34,
-   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "sha": "496f30be69fc4ec2ab216900a94a8bbec27969f852802f72399d43d783fcd433",
    "torps": 0,
    "tractors": 2
   },
@@ -1084,7 +1084,7 @@
    "frame": 135,
    "lights": 0,
    "phasers": 34,
-   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "sha": "496f30be69fc4ec2ab216900a94a8bbec27969f852802f72399d43d783fcd433",
    "torps": 0,
    "tractors": 2
   },
@@ -1092,7 +1092,7 @@
    "frame": 136,
    "lights": 0,
    "phasers": 34,
-   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "sha": "496f30be69fc4ec2ab216900a94a8bbec27969f852802f72399d43d783fcd433",
    "torps": 0,
    "tractors": 2
   },
@@ -1100,7 +1100,7 @@
    "frame": 137,
    "lights": 0,
    "phasers": 34,
-   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "sha": "496f30be69fc4ec2ab216900a94a8bbec27969f852802f72399d43d783fcd433",
    "torps": 0,
    "tractors": 2
   },
@@ -1108,7 +1108,7 @@
    "frame": 138,
    "lights": 0,
    "phasers": 34,
-   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "sha": "496f30be69fc4ec2ab216900a94a8bbec27969f852802f72399d43d783fcd433",
    "torps": 0,
    "tractors": 2
   },
@@ -1116,7 +1116,7 @@
    "frame": 139,
    "lights": 0,
    "phasers": 34,
-   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "sha": "23f5a7abf75548b7f182672c8e189cbcef392de19e2ef72ece27e70ef737e2f0",
    "torps": 0,
    "tractors": 2
   },
@@ -1124,7 +1124,7 @@
    "frame": 140,
    "lights": 0,
    "phasers": 34,
-   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "sha": "23f5a7abf75548b7f182672c8e189cbcef392de19e2ef72ece27e70ef737e2f0",
    "torps": 0,
    "tractors": 2
   },
@@ -1132,7 +1132,7 @@
    "frame": 141,
    "lights": 0,
    "phasers": 34,
-   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "sha": "23f5a7abf75548b7f182672c8e189cbcef392de19e2ef72ece27e70ef737e2f0",
    "torps": 0,
    "tractors": 2
   },
@@ -1140,7 +1140,7 @@
    "frame": 142,
    "lights": 0,
    "phasers": 34,
-   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "sha": "23f5a7abf75548b7f182672c8e189cbcef392de19e2ef72ece27e70ef737e2f0",
    "torps": 0,
    "tractors": 2
   },
@@ -1148,7 +1148,7 @@
    "frame": 143,
    "lights": 0,
    "phasers": 34,
-   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "sha": "23f5a7abf75548b7f182672c8e189cbcef392de19e2ef72ece27e70ef737e2f0",
    "torps": 0,
    "tractors": 2
   },
@@ -1156,7 +1156,7 @@
    "frame": 144,
    "lights": 0,
    "phasers": 34,
-   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "sha": "23f5a7abf75548b7f182672c8e189cbcef392de19e2ef72ece27e70ef737e2f0",
    "torps": 0,
    "tractors": 2
   },
@@ -1164,7 +1164,7 @@
    "frame": 145,
    "lights": 0,
    "phasers": 34,
-   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "sha": "23f5a7abf75548b7f182672c8e189cbcef392de19e2ef72ece27e70ef737e2f0",
    "torps": 0,
    "tractors": 2
   },
@@ -1172,7 +1172,7 @@
    "frame": 146,
    "lights": 0,
    "phasers": 28,
-   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "sha": "07f55af62299737f1fa842683fd1dd0e93f133aa92926544b4b19580b7ebef62",
    "torps": 0,
    "tractors": 2
   },
@@ -1180,7 +1180,7 @@
    "frame": 147,
    "lights": 0,
    "phasers": 28,
-   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "sha": "07f55af62299737f1fa842683fd1dd0e93f133aa92926544b4b19580b7ebef62",
    "torps": 0,
    "tractors": 2
   },
@@ -1188,7 +1188,7 @@
    "frame": 148,
    "lights": 0,
    "phasers": 28,
-   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "sha": "07f55af62299737f1fa842683fd1dd0e93f133aa92926544b4b19580b7ebef62",
    "torps": 0,
    "tractors": 2
   },
@@ -1196,7 +1196,7 @@
    "frame": 149,
    "lights": 0,
    "phasers": 28,
-   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "sha": "07f55af62299737f1fa842683fd1dd0e93f133aa92926544b4b19580b7ebef62",
    "torps": 0,
    "tractors": 2
   },
@@ -1204,7 +1204,7 @@
    "frame": 150,
    "lights": 0,
    "phasers": 28,
-   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "sha": "07f55af62299737f1fa842683fd1dd0e93f133aa92926544b4b19580b7ebef62",
    "torps": 0,
    "tractors": 2
   },
@@ -1212,7 +1212,7 @@
    "frame": 151,
    "lights": 0,
    "phasers": 28,
-   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "sha": "07f55af62299737f1fa842683fd1dd0e93f133aa92926544b4b19580b7ebef62",
    "torps": 0,
    "tractors": 2
   },
@@ -1220,7 +1220,7 @@
    "frame": 152,
    "lights": 0,
    "phasers": 28,
-   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "sha": "07f55af62299737f1fa842683fd1dd0e93f133aa92926544b4b19580b7ebef62",
    "torps": 0,
    "tractors": 2
   },
@@ -1228,7 +1228,7 @@
    "frame": 153,
    "lights": 0,
    "phasers": 28,
-   "sha": "9b019e10aa541062f5c612191626ca82436b5b07de319fbb76c7ec21ccdd16f8",
+   "sha": "dfa1e29836330940fbeb90e44fc4c4fca3b12b00ea1757cca6b48d21c7840418",
    "torps": 0,
    "tractors": 2
   },
@@ -1236,7 +1236,7 @@
    "frame": 154,
    "lights": 0,
    "phasers": 28,
-   "sha": "9b019e10aa541062f5c612191626ca82436b5b07de319fbb76c7ec21ccdd16f8",
+   "sha": "dfa1e29836330940fbeb90e44fc4c4fca3b12b00ea1757cca6b48d21c7840418",
    "torps": 0,
    "tractors": 2
   },
@@ -1244,7 +1244,7 @@
    "frame": 155,
    "lights": 0,
    "phasers": 28,
-   "sha": "2d0c0b98c7b1bc586051ad0f7253601b180efbdbd472807768f2d3d1acc5c78e",
+   "sha": "af5dc9e9a33ba2df1c54fd94b072663ce93063e1bf49302b5595b369a2ee6306",
    "torps": 0,
    "tractors": 2
   },
@@ -1252,7 +1252,7 @@
    "frame": 156,
    "lights": 0,
    "phasers": 24,
-   "sha": "153bdfb2e808209e4f7d05a8d4530019a003cfbb8658fe869c440634fc439e0a",
+   "sha": "d2fd141e6332b94cb6e10ccdbaf479c8cc2d26c034be53af8b0ea1bcb7484bed",
    "torps": 0,
    "tractors": 0
   },
@@ -1260,7 +1260,7 @@
    "frame": 157,
    "lights": 0,
    "phasers": 24,
-   "sha": "153bdfb2e808209e4f7d05a8d4530019a003cfbb8658fe869c440634fc439e0a",
+   "sha": "d2fd141e6332b94cb6e10ccdbaf479c8cc2d26c034be53af8b0ea1bcb7484bed",
    "torps": 0,
    "tractors": 0
   },
@@ -1268,7 +1268,7 @@
    "frame": 158,
    "lights": 0,
    "phasers": 24,
-   "sha": "153bdfb2e808209e4f7d05a8d4530019a003cfbb8658fe869c440634fc439e0a",
+   "sha": "d2fd141e6332b94cb6e10ccdbaf479c8cc2d26c034be53af8b0ea1bcb7484bed",
    "torps": 0,
    "tractors": 0
   },
@@ -1276,7 +1276,7 @@
    "frame": 159,
    "lights": 0,
    "phasers": 28,
-   "sha": "ccdc20a67b6e5f39a7f6426f4a06d8eb4ab5be24b843a2d028edf028bf137406",
+   "sha": "d5a8f32999182964b6d53531b813979271535e1bb0449d5a5d0967d97c432b45",
    "torps": 0,
    "tractors": 0
   },
@@ -1284,7 +1284,7 @@
    "frame": 160,
    "lights": 0,
    "phasers": 28,
-   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "sha": "63f2c8a55bfe20a23bbe57c0d4131d9994c48cb585bb9e34e4400e12bedfc461",
    "torps": 0,
    "tractors": 0
   },
@@ -1292,7 +1292,7 @@
    "frame": 161,
    "lights": 0,
    "phasers": 28,
-   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "sha": "63f2c8a55bfe20a23bbe57c0d4131d9994c48cb585bb9e34e4400e12bedfc461",
    "torps": 0,
    "tractors": 0
   },
@@ -1300,7 +1300,7 @@
    "frame": 162,
    "lights": 0,
    "phasers": 28,
-   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "sha": "63f2c8a55bfe20a23bbe57c0d4131d9994c48cb585bb9e34e4400e12bedfc461",
    "torps": 0,
    "tractors": 0
   },
@@ -1308,7 +1308,7 @@
    "frame": 163,
    "lights": 0,
    "phasers": 28,
-   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "sha": "63f2c8a55bfe20a23bbe57c0d4131d9994c48cb585bb9e34e4400e12bedfc461",
    "torps": 0,
    "tractors": 0
   },
@@ -1316,7 +1316,7 @@
    "frame": 164,
    "lights": 0,
    "phasers": 28,
-   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "sha": "63f2c8a55bfe20a23bbe57c0d4131d9994c48cb585bb9e34e4400e12bedfc461",
    "torps": 0,
    "tractors": 0
   },
@@ -1324,7 +1324,7 @@
    "frame": 165,
    "lights": 0,
    "phasers": 28,
-   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "sha": "63f2c8a55bfe20a23bbe57c0d4131d9994c48cb585bb9e34e4400e12bedfc461",
    "torps": 0,
    "tractors": 0
   },
@@ -1332,7 +1332,7 @@
    "frame": 166,
    "lights": 0,
    "phasers": 28,
-   "sha": "0b8cef27265eddb9f2f7ec50ba059d90f27f71bd1d6b08699a7d79e71cb9b79c",
+   "sha": "8cbc1085949e6a6483a9d86b2856a351bb9d76e46c7d8b59107389eeec49239a",
    "torps": 0,
    "tractors": 0
   },
@@ -1340,7 +1340,7 @@
    "frame": 167,
    "lights": 0,
    "phasers": 28,
-   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "sha": "6bce5598c54271c860d5d9c611aa89a8d70b28547048e6fa1eb65814c9fcbd42",
    "torps": 0,
    "tractors": 0
   },
@@ -1348,7 +1348,7 @@
    "frame": 168,
    "lights": 0,
    "phasers": 28,
-   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "sha": "6bce5598c54271c860d5d9c611aa89a8d70b28547048e6fa1eb65814c9fcbd42",
    "torps": 0,
    "tractors": 0
   },
@@ -1356,7 +1356,7 @@
    "frame": 169,
    "lights": 0,
    "phasers": 28,
-   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "sha": "6bce5598c54271c860d5d9c611aa89a8d70b28547048e6fa1eb65814c9fcbd42",
    "torps": 0,
    "tractors": 0
   },
@@ -1364,7 +1364,7 @@
    "frame": 170,
    "lights": 0,
    "phasers": 28,
-   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "sha": "6bce5598c54271c860d5d9c611aa89a8d70b28547048e6fa1eb65814c9fcbd42",
    "torps": 0,
    "tractors": 0
   },
@@ -1372,7 +1372,7 @@
    "frame": 171,
    "lights": 0,
    "phasers": 28,
-   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "sha": "6bce5598c54271c860d5d9c611aa89a8d70b28547048e6fa1eb65814c9fcbd42",
    "torps": 0,
    "tractors": 0
   },
@@ -1380,7 +1380,7 @@
    "frame": 172,
    "lights": 0,
    "phasers": 28,
-   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "sha": "6bce5598c54271c860d5d9c611aa89a8d70b28547048e6fa1eb65814c9fcbd42",
    "torps": 0,
    "tractors": 0
   },
@@ -1388,7 +1388,7 @@
    "frame": 173,
    "lights": 0,
    "phasers": 28,
-   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "sha": "6bce5598c54271c860d5d9c611aa89a8d70b28547048e6fa1eb65814c9fcbd42",
    "torps": 0,
    "tractors": 0
   },
@@ -1396,7 +1396,7 @@
    "frame": 174,
    "lights": 0,
    "phasers": 28,
-   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "sha": "4eabc9bdf94428c4c144771ab5be73da0d851f70f5d0db2211021b7ea0af2d5d",
    "torps": 0,
    "tractors": 0
   },
@@ -1404,7 +1404,7 @@
    "frame": 175,
    "lights": 0,
    "phasers": 28,
-   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "sha": "4eabc9bdf94428c4c144771ab5be73da0d851f70f5d0db2211021b7ea0af2d5d",
    "torps": 0,
    "tractors": 0
   },
@@ -1412,7 +1412,7 @@
    "frame": 176,
    "lights": 0,
    "phasers": 30,
-   "sha": "359a8c1c559c03353e60d8777ffc4b12c0856b79120bf94571c9afdc8edccddf",
+   "sha": "6881fc603ee20e61149f0e3173718694606a20ab009b9cbf3e9772b6dde7d304",
    "torps": 0,
    "tractors": 0
   },
@@ -1420,7 +1420,7 @@
    "frame": 177,
    "lights": 0,
    "phasers": 28,
-   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "sha": "4eabc9bdf94428c4c144771ab5be73da0d851f70f5d0db2211021b7ea0af2d5d",
    "torps": 0,
    "tractors": 0
   },
@@ -1428,7 +1428,7 @@
    "frame": 178,
    "lights": 0,
    "phasers": 28,
-   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "sha": "4eabc9bdf94428c4c144771ab5be73da0d851f70f5d0db2211021b7ea0af2d5d",
    "torps": 0,
    "tractors": 0
   },
@@ -1436,7 +1436,7 @@
    "frame": 179,
    "lights": 0,
    "phasers": 28,
-   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "sha": "4eabc9bdf94428c4c144771ab5be73da0d851f70f5d0db2211021b7ea0af2d5d",
    "torps": 0,
    "tractors": 0
   },
@@ -1444,7 +1444,7 @@
    "frame": 180,
    "lights": 0,
    "phasers": 28,
-   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "sha": "4eabc9bdf94428c4c144771ab5be73da0d851f70f5d0db2211021b7ea0af2d5d",
    "torps": 0,
    "tractors": 0
   },
@@ -1452,7 +1452,7 @@
    "frame": 181,
    "lights": 0,
    "phasers": 28,
-   "sha": "c6457f87adbf577c39828375cf5f1f832eb722e012ac3ef4b6cfe3a072b9fb7e",
+   "sha": "6c985e880a9a654042067c58fe2df1b983881fd430e969e8affb713d2f9d6dae",
    "torps": 0,
    "tractors": 0
   },
@@ -1460,7 +1460,7 @@
    "frame": 182,
    "lights": 0,
    "phasers": 28,
-   "sha": "c6457f87adbf577c39828375cf5f1f832eb722e012ac3ef4b6cfe3a072b9fb7e",
+   "sha": "6c985e880a9a654042067c58fe2df1b983881fd430e969e8affb713d2f9d6dae",
    "torps": 0,
    "tractors": 0
   },
@@ -1468,7 +1468,7 @@
    "frame": 183,
    "lights": 0,
    "phasers": 28,
-   "sha": "82fd6bf6683948beea7d2f6ef9e130bd8708dc7c30c680349ce922df96c9df39",
+   "sha": "d6c4385c8ee322de5a22f7df381efdaef113e1732b2973fb8e9c7fedc4ca654e",
    "torps": 0,
    "tractors": 0
   },
@@ -1476,7 +1476,7 @@
    "frame": 184,
    "lights": 0,
    "phasers": 26,
-   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "sha": "dbe89b36672df9d74249f2f01fae49fa4703ad569af392cfdb8954106f5b14db",
    "torps": 0,
    "tractors": 0
   },
@@ -1484,7 +1484,7 @@
    "frame": 185,
    "lights": 0,
    "phasers": 26,
-   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "sha": "dbe89b36672df9d74249f2f01fae49fa4703ad569af392cfdb8954106f5b14db",
    "torps": 0,
    "tractors": 0
   },
@@ -1492,7 +1492,7 @@
    "frame": 186,
    "lights": 0,
    "phasers": 26,
-   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "sha": "dbe89b36672df9d74249f2f01fae49fa4703ad569af392cfdb8954106f5b14db",
    "torps": 0,
    "tractors": 0
   },
@@ -1500,7 +1500,7 @@
    "frame": 187,
    "lights": 0,
    "phasers": 26,
-   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "sha": "dbe89b36672df9d74249f2f01fae49fa4703ad569af392cfdb8954106f5b14db",
    "torps": 0,
    "tractors": 0
   },
@@ -1508,7 +1508,7 @@
    "frame": 188,
    "lights": 0,
    "phasers": 26,
-   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "sha": "61bcb7ebb73a41817c7f1b5f4dbf92c8fe2cc9dc1f1fe0d70c46e6f404ec1eaa",
    "torps": 0,
    "tractors": 0
   },
@@ -1516,7 +1516,7 @@
    "frame": 189,
    "lights": 0,
    "phasers": 26,
-   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "sha": "61bcb7ebb73a41817c7f1b5f4dbf92c8fe2cc9dc1f1fe0d70c46e6f404ec1eaa",
    "torps": 0,
    "tractors": 0
   },
@@ -1524,7 +1524,7 @@
    "frame": 190,
    "lights": 0,
    "phasers": 26,
-   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "sha": "61bcb7ebb73a41817c7f1b5f4dbf92c8fe2cc9dc1f1fe0d70c46e6f404ec1eaa",
    "torps": 0,
    "tractors": 0
   },
@@ -1532,7 +1532,7 @@
    "frame": 191,
    "lights": 0,
    "phasers": 26,
-   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "sha": "61bcb7ebb73a41817c7f1b5f4dbf92c8fe2cc9dc1f1fe0d70c46e6f404ec1eaa",
    "torps": 0,
    "tractors": 0
   },
@@ -1540,7 +1540,7 @@
    "frame": 192,
    "lights": 0,
    "phasers": 26,
-   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "sha": "61bcb7ebb73a41817c7f1b5f4dbf92c8fe2cc9dc1f1fe0d70c46e6f404ec1eaa",
    "torps": 0,
    "tractors": 0
   },
@@ -1548,7 +1548,7 @@
    "frame": 193,
    "lights": 0,
    "phasers": 26,
-   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "sha": "61bcb7ebb73a41817c7f1b5f4dbf92c8fe2cc9dc1f1fe0d70c46e6f404ec1eaa",
    "torps": 0,
    "tractors": 0
   },
@@ -1556,7 +1556,7 @@
    "frame": 194,
    "lights": 0,
    "phasers": 26,
-   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "sha": "61bcb7ebb73a41817c7f1b5f4dbf92c8fe2cc9dc1f1fe0d70c46e6f404ec1eaa",
    "torps": 0,
    "tractors": 0
   },
@@ -1564,7 +1564,7 @@
    "frame": 195,
    "lights": 0,
    "phasers": 26,
-   "sha": "5436556562e6655756e648bee19108ed405495e3046d7c4094271d2f9eb4649e",
+   "sha": "fc04da92ccf6452479988a829f60377d23b171236af1bb85d84f17af19ed6d2f",
    "torps": 0,
    "tractors": 0
   },
@@ -1572,7 +1572,7 @@
    "frame": 196,
    "lights": 0,
    "phasers": 26,
-   "sha": "5061326d773b6cdb29b6c98887eab96d8ae85363f6731e17037f508ed08ab634",
+   "sha": "6104ca2e4cae9581edf45dfe2b9bccc7aec38e00c57d3f6c833e7b6d2e1ce644",
    "torps": 0,
    "tractors": 0
   },
@@ -1580,7 +1580,7 @@
    "frame": 197,
    "lights": 0,
    "phasers": 18,
-   "sha": "1639d8cf40f6ce48cdcaa886977f2c941b7af18fd4486b4fe8bfc3955931097c",
+   "sha": "618fce631874c0abd007fad9dcfe6d0bdf499399b6aa16e0b2a95ede2eee6fa6",
    "torps": 0,
    "tractors": 0
   },
@@ -1588,7 +1588,7 @@
    "frame": 198,
    "lights": 0,
    "phasers": 18,
-   "sha": "1639d8cf40f6ce48cdcaa886977f2c941b7af18fd4486b4fe8bfc3955931097c",
+   "sha": "618fce631874c0abd007fad9dcfe6d0bdf499399b6aa16e0b2a95ede2eee6fa6",
    "torps": 0,
    "tractors": 0
   },
@@ -1596,7 +1596,7 @@
    "frame": 199,
    "lights": 0,
    "phasers": 20,
-   "sha": "0e1b28990f3035382dd2cca7c46db7bddb110ad4a62857e4fdc5912215886c35",
+   "sha": "8844bed12dfc564b87ef56bec17b638a8ddedeb4b6365fd81d2a80c44b68eefe",
    "torps": 0,
    "tractors": 0
   },
@@ -1604,7 +1604,7 @@
    "frame": 200,
    "lights": 0,
    "phasers": 16,
-   "sha": "c19d97f7736288589f7e1356cd238a2c4694fa68da944bccb6e606c2eb2fda18",
+   "sha": "c454a192bd3f3db262ad9c7a9f12492c7fcdd302eb01d3b6be15adf113bca1c8",
    "torps": 0,
    "tractors": 0
   },
@@ -1612,7 +1612,7 @@
    "frame": 201,
    "lights": 0,
    "phasers": 16,
-   "sha": "c19d97f7736288589f7e1356cd238a2c4694fa68da944bccb6e606c2eb2fda18",
+   "sha": "c454a192bd3f3db262ad9c7a9f12492c7fcdd302eb01d3b6be15adf113bca1c8",
    "torps": 0,
    "tractors": 0
   },
@@ -1620,7 +1620,7 @@
    "frame": 202,
    "lights": 0,
    "phasers": 16,
-   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "sha": "cb2b92600ee6c763a41576680fd7b5c51ca9ff43d6d631f8b9fac141844b8a3a",
    "torps": 0,
    "tractors": 0
   },
@@ -1628,7 +1628,7 @@
    "frame": 203,
    "lights": 0,
    "phasers": 16,
-   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "sha": "cb2b92600ee6c763a41576680fd7b5c51ca9ff43d6d631f8b9fac141844b8a3a",
    "torps": 0,
    "tractors": 0
   },
@@ -1636,7 +1636,7 @@
    "frame": 204,
    "lights": 0,
    "phasers": 16,
-   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "sha": "cb2b92600ee6c763a41576680fd7b5c51ca9ff43d6d631f8b9fac141844b8a3a",
    "torps": 0,
    "tractors": 0
   },
@@ -1644,7 +1644,7 @@
    "frame": 205,
    "lights": 0,
    "phasers": 16,
-   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "sha": "cb2b92600ee6c763a41576680fd7b5c51ca9ff43d6d631f8b9fac141844b8a3a",
    "torps": 0,
    "tractors": 0
   },
@@ -1652,7 +1652,7 @@
    "frame": 206,
    "lights": 0,
    "phasers": 16,
-   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "sha": "cb2b92600ee6c763a41576680fd7b5c51ca9ff43d6d631f8b9fac141844b8a3a",
    "torps": 0,
    "tractors": 0
   },
@@ -1660,7 +1660,7 @@
    "frame": 207,
    "lights": 0,
    "phasers": 16,
-   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "sha": "cb2b92600ee6c763a41576680fd7b5c51ca9ff43d6d631f8b9fac141844b8a3a",
    "torps": 0,
    "tractors": 0
   },
@@ -1668,7 +1668,7 @@
    "frame": 208,
    "lights": 0,
    "phasers": 16,
-   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "sha": "cb2b92600ee6c763a41576680fd7b5c51ca9ff43d6d631f8b9fac141844b8a3a",
    "torps": 0,
    "tractors": 0
   },
@@ -1676,7 +1676,7 @@
    "frame": 209,
    "lights": 0,
    "phasers": 16,
-   "sha": "71a5f79c57b50e5453c79b45ff717a4311189f3ce773e7d9ec55a704a3c382e5",
+   "sha": "4b87253e791151b20b1b3ebf620667ea84421a19fc2a66ac9f6ef8e7a3e70701",
    "torps": 0,
    "tractors": 0
   },
@@ -1916,7 +1916,7 @@
    "frame": 239,
    "lights": 0,
    "phasers": 14,
-   "sha": "02d41a67186679434f8b1ae7ac0c0cc53f046330bfbf9156885ae32f792a80a5",
+   "sha": "030a7c78fbd21dae6afa4b164e3c25c2115abccdfd90c94a41eab956761fa10a",
    "torps": 0,
    "tractors": 0
   },
@@ -1924,7 +1924,7 @@
    "frame": 240,
    "lights": 0,
    "phasers": 14,
-   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "sha": "99341a4a9a885e0ed06214823c6d2ebf2d78d4cb9c2ec7f8cae9e852ae705aee",
    "torps": 0,
    "tractors": 0
   },
@@ -1932,7 +1932,7 @@
    "frame": 241,
    "lights": 0,
    "phasers": 14,
-   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "sha": "99341a4a9a885e0ed06214823c6d2ebf2d78d4cb9c2ec7f8cae9e852ae705aee",
    "torps": 0,
    "tractors": 0
   },
@@ -1940,7 +1940,7 @@
    "frame": 242,
    "lights": 0,
    "phasers": 14,
-   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "sha": "99341a4a9a885e0ed06214823c6d2ebf2d78d4cb9c2ec7f8cae9e852ae705aee",
    "torps": 0,
    "tractors": 0
   },
@@ -1948,7 +1948,7 @@
    "frame": 243,
    "lights": 0,
    "phasers": 14,
-   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "sha": "99341a4a9a885e0ed06214823c6d2ebf2d78d4cb9c2ec7f8cae9e852ae705aee",
    "torps": 0,
    "tractors": 0
   },
@@ -1956,7 +1956,7 @@
    "frame": 244,
    "lights": 0,
    "phasers": 14,
-   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "sha": "99341a4a9a885e0ed06214823c6d2ebf2d78d4cb9c2ec7f8cae9e852ae705aee",
    "torps": 0,
    "tractors": 0
   },
@@ -1964,7 +1964,7 @@
    "frame": 245,
    "lights": 0,
    "phasers": 14,
-   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "sha": "99341a4a9a885e0ed06214823c6d2ebf2d78d4cb9c2ec7f8cae9e852ae705aee",
    "torps": 0,
    "tractors": 0
   },
@@ -1972,7 +1972,7 @@
    "frame": 246,
    "lights": 0,
    "phasers": 14,
-   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "sha": "99341a4a9a885e0ed06214823c6d2ebf2d78d4cb9c2ec7f8cae9e852ae705aee",
    "torps": 0,
    "tractors": 0
   },
@@ -1980,7 +1980,7 @@
    "frame": 247,
    "lights": 0,
    "phasers": 6,
-   "sha": "2ebca430d72ff0ff7a5461f33e25df5f89a9a8502b12241bbeb51ba7fcbac838",
+   "sha": "523dfd4b8b21f707055d2694e9ddd82ad259af9cd2d763e60f1d1c624aad4cbb",
    "torps": 0,
    "tractors": 0
   },
@@ -1988,7 +1988,7 @@
    "frame": 248,
    "lights": 0,
    "phasers": 6,
-   "sha": "2ebca430d72ff0ff7a5461f33e25df5f89a9a8502b12241bbeb51ba7fcbac838",
+   "sha": "523dfd4b8b21f707055d2694e9ddd82ad259af9cd2d763e60f1d1c624aad4cbb",
    "torps": 0,
    "tractors": 0
   },
@@ -1996,7 +1996,7 @@
    "frame": 249,
    "lights": 0,
    "phasers": 8,
-   "sha": "2218c46f4e7af3dfb8a6c7b4be6a82382e33a7bab80f2e1eecee96d7fd52e9a0",
+   "sha": "d5c04bae0acf52c812151efb6211e123f6de57cee4d1e998d90640882e19ec60",
    "torps": 0,
    "tractors": 0
   },
@@ -2004,7 +2004,7 @@
    "frame": 250,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2012,7 +2012,7 @@
    "frame": 251,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2020,7 +2020,7 @@
    "frame": 252,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2028,7 +2028,7 @@
    "frame": 253,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2036,7 +2036,7 @@
    "frame": 254,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2044,7 +2044,7 @@
    "frame": 255,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2052,7 +2052,7 @@
    "frame": 256,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2060,7 +2060,7 @@
    "frame": 257,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2068,7 +2068,7 @@
    "frame": 258,
    "lights": 0,
    "phasers": 6,
-   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "sha": "4de16dcf0d109d88d0914067010b4d7da3d77e9cf3c567661d07c0a05214cb78",
    "torps": 0,
    "tractors": 0
   },
@@ -2076,7 +2076,7 @@
    "frame": 259,
    "lights": 0,
    "phasers": 10,
-   "sha": "72192abd8ca42391a8beba6823f214e1263b37665ffc8f49f1ee016177f34c44",
+   "sha": "a96048541f03d8452b76908d2a8e76188745b43b42e1f1c75199062d273c3df6",
    "torps": 0,
    "tractors": 0
   },
@@ -2402,7 +2402,8 @@
   }
  ],
  "platform": "darwin",
+ "ruling": "Mark 2026-11-11 beam-blocking Task 6 (ledger)",
  "scene": "beam_scene",
  "schema": 1,
- "source": "python builders"
+ "source": "native feeds"
 }

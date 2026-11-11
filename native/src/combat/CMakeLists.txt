@@ -21,6 +21,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/beam_geometry.cc
     src/projectile_geometry.cc
     src/beam_trace.cc
+    src/beam_block.cc
     src/fire_gates.cc
     src/k1_fire_control.cc
     src/k0_charging.cc
