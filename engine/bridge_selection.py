@@ -31,7 +31,9 @@ STOCK_BRIDGES: tuple = (
     BridgeInfo("SovereignBridge", "Sovereign"),
 )
 
-_SHIP_KEY_RE = re.compile(r"^ships/([^/]+)\.py$")
+# .pyc too: a mod ship shipped only as Python 1.5 bytecode is lifted by the
+# loader (engine/py15/lift.py), so it is as installed as a .py.
+_SHIP_KEY_RE = re.compile(r"^ships/([^/]+)\.pyc?$")
 
 # BC's own "Player and Region" picker: the hulls GeneratePlayerShipMenu
 # offers (sdk QuickBattle.py:1622-1703), by the script stem SelectPlayerShip
@@ -200,9 +202,10 @@ def _stock_ship_stems() -> dict:
 
 
 def _mod_ship_stems() -> dict:
-    """{folded stem: author's stem} for every top-level ships/*.py a mod
-    provides. Index keys are folded and scripts/-stripped; raw_rel keeps the
-    author's spelling, which is what g_sPlayerType / CreatePlayerShip see."""
+    """{folded stem: author's stem} for every top-level ships/*.py (or
+    bytecode-only ships/*.pyc) a mod provides. Index keys are folded and
+    scripts/-stripped; raw_rel keeps the author's spelling, which is what
+    g_sPlayerType / CreatePlayerShip see."""
     out: dict = {}
     for key, mf in mods.current().files.items():
         if mf.target != "sdk":  # paths-guard: kind label

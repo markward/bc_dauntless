@@ -148,6 +148,13 @@ def test_mod_ships_join_the_universe_in_the_authors_spelling(fake_install, tmp_p
     assert "lcintrepid" not in bs.available_ships()
 
 
+def test_a_bytecode_only_mod_ship_is_offered(fake_install, tmp_path):
+    # A mod ship shipped only as Python 1.5 .pyc is lifted by the loader.
+    install_mod(tmp_path, "KM", {"scripts/Ships/KMShip.pyc": "not read\n"})
+    register_player_ship("KMShip")
+    assert "KMShip" in bs.available_ships()
+
+
 def test_a_mod_ship_registered_only_for_the_catalog_is_not_playable(fake_install, tmp_path):
     install_mod(tmp_path, "Cube", {"scripts/Ships/BorgCube.py": "# mod ship\n"})
     register_player_ship("BorgCube", player=False)      # RegisterQBShipMenu only
