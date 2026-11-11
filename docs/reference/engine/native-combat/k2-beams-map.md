@@ -1,3 +1,5 @@
+> **Extended 2026-11-11 (beam blocking, branch `feat/beam-blocking`):** the loop now stops a beam on the first object in its path (`beam_blockers.first_blocker`, after `bubble_entry`), and K2 walks it natively (`BLOCK` in `k2_beams.cc`, the C++ port in `beam_block.cc`) with the ASK `blocker` as its fallback. §1.1 shows the lines; §1.7 is the map. The header contract is `k2_beams.h`, THE BLOCKER.
+
 > **Superseded in part (2026-11-02, native-damage phase):** the damage pulse no longer hands a CONTACT record back to Python. K2 applies it in the walk through the native hit, so the next bank on the same target sees it by construction (ruling P1). See the native-damage spec §10.
 
 > **Implemented 2026-11-01** on branch `perf/native-combat-k2`, tip commit `6418f858f`. Outcome, measurements and rulings: `docs/superpowers/specs/2026-10-31-native-combat-k2-beams-design.md` §10. The map below is the pre-build snapshot and is not updated.
@@ -112,6 +114,13 @@ for ship in ships_list:                                                # list or
             max_dist=(dist * 1.5 if dist > 1e-6 else 0.0), fallback_point=target_pos)
         bubble_entry = (combat.shield_bubble_entry(target, emitter_pos, aim_unit, dist * 1.5)
                         if (aim_unit is not None and combat.shields_block(target)) else None)  # §1.5; shields_block only if aim_unit
+        if aim_unit is not None:                                       # §1.7 (2026-11-11) — the first object in the path
+            b = beam_blockers.first_blocker(ship, target, emitter_pos, aim_unit,
+                    beam_blockers.contact_distance(emitter_pos, impact_point, bubble_entry),
+                    beam_blockers.step_ships(), beam_blockers.step_planets(), ship_instances)
+            if b is not None:
+                if b.kind == "planet": continue                       # no contact, no pulse; the dwell taken is dropped
+                target, dist, impact_point, impact_normal, bubble_entry = (b.obj, b.dist, b.point, b.normal, b.bubble)
         ───────── PURE-GEOMETRY DECISION ENDS HERE (per bank) ─────────
         if flush_dwell <= 0.0:                                         # not a pulse tick on a beam that is on
             hit_feedback.beam_contact(ship=target, source=ship, point=impact_point, normal=impact_normal,
@@ -301,6 +310,34 @@ In the capture (§9), `shields_block` was True on 98.8% of contacts (369,792 bub
 | Contact | tick damage, splash radius, damage, damage_hull (pure arithmetic) | `beam_contact` or `apply_hit` |
 
 The decision ends after the bubble entry and the damage arithmetic. Everything after it is an effect.
+
+### 1.7 The blocker (added 2026-11-11, beam blocking)
+
+Python: `host_loop._phaser_step_bank`, right after `bubble_entry`, calls `engine/appc/beam_blockers.first_blocker` when `aim_unit` is known. Its candidates are `beam_blockers.step_ships()` (the step's `ships_list`, set by `begin_step` around `cb.phasers`) and the Planets of the shooter's set (`planet_rows`, from `step_planets()`, host_loop's `planet_instances`). Spec: `docs/superpowers/specs/2026-11-11-beam-blocking-design.md` §4-5.
+
+K2 (`k2_beams.cc`), after `BUBBLE` / `BUBBLE_ANSWER`:
+
+| State | Python line | What the kernel does |
+|---|---|---|
+| `BLOCK` | `if aim_unit is not None: b = first_blocker(...)` | `contact_dist` = \|bubble − emitter\| if the bubble is set, else \|impact − emitter\| (`math.sqrt` of the squares). `first_blocker` (`beam_block.h`) over the session's ship handles and the context's `planets`. `NeedPython` → ASK `blocker`. None → `PHASER_CONTACT`. Planet → `BANK_NEXT` (the logged dwell writes stay). Ship → `take_blocker`. |
+| `BLOCK_ANSWER` | (ASK blocker answered) | `None` / `("planet", d)` / `("ship", handle, d, point, normal, bubble, tier)`, as above. A handle with no live row: `std::logic_error` (protocol). |
+| `BLOCK_SHIELDS` | (`beam_contact`'s own `shields_block(target)`, now the blocker) | Native `shields_block` for the blocker, else ASK `shields_block` (`BLOCK_SHIELDS_ANSWER`). |
+| `PHASER_CONTACT` | `_phaser_contact(...)` | The rest, the native pulse or the CONTACT record, unchanged, on the substituted values. |
+
+`take_blocker` sets the contact's `target` (its handle), `dist`, impact point and normal, `bubble`; tier `Mesh` with a normal, else `Sphere`; and `point_is_bubble` when the blocker was met at its bubble with no mesh normal (Python's `point = b`: the records say tier `"bubble"`, and a native pulse's HIT_PRESENT carries `shield_point IS point`, `damage.h` H14). `target_pos` and `aim_unit` stay the intended target's.
+
+Feeds (driver, `native_combat.py`):
+
+- `_k2_planet_rows(ships, planet_instances)` → context `planets`: `(set handle, Object handle or -1, cx, cy, cz, world_radius, iid)` per Planet of each set a ship is in, in the set's object order, only where the planet's containing set is that set.
+- `_k2_python_candidates(ships)` → context `python_candidates`: ships whose class `_k2_flag` calls overridden (IsDead and IsHidden are now in the ObjectClass / ShipClass roles). `first_blocker` throws `NeedPython` at such a candidate (at its IsDead), so the ASK decides.
+- `view_offsets`: an entry for every set a ship of the step is in, and `-1` → None (`_K2PhaserContext`). Before, only the viewing set had one; a target with an instance in an unviewed set is now traced natively too.
+- All three are read at begin and again after any non-pure record (`_K2PhaserContext.python_ran`); the view offsets also when the viewing set changed.
+
+Candidate rows: the ASK answer names a ship by handle, so in `BANK_FOR` (once a bank has a target and goes on, before any record for it) a session ship with no live row hands the bank to Python (`bank_fallback`, `StaleRow`). Re-checked only after a record (only a record's Python can free a row).
+
+Counts: `k2_ask_queries["blocker"]`, `k2_blocked` = `{"ship", "planet"}`.
+
+Tests: `tests/unit/test_native_k2_blocker.py` (native vs Python), `tests/unit/test_native_k2_bindings.py::test_blocker_ask_record_and_answers` (layouts), `native/tests/combat/k2_beams_test.cc` `K2Blocker.*`, `tests/host/test_native_k2_differential.py` (real fights: friendly ships take blocked beams).
 
 ---
 

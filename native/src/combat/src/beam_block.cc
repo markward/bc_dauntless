@@ -117,6 +117,10 @@ std::optional<BeamBlocker> walk(const BeamBlockInputs& in, int64_t shooter,
         // if c is shooter or c is target: continue
         if (c == shooter || c == target) continue;
         const ObjectRow& r = row(m, c, "candidate");
+        // A class overriding what the walk reads from the mirror: Python's,
+        // from its first call (IsDead) on.
+        if (in.python_candidates && in.python_candidates->count(c))
+            need_python("a candidate whose class overrides a mirrored read");
         // if hasattr(c, "IsDead") and c.IsDead(): continue
         // (a stub IsDead records telemetry: Python's)
         if (!r.has_real_is_dead) need_python("a candidate with no real IsDead");

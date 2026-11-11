@@ -4,6 +4,7 @@
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "dauntless/combat/beam_trace.h"
@@ -30,8 +31,12 @@
 // no live row, a candidate without a real IsDead, an unnameable
 // `_containing_set`, a non-ShipClass candidate (bubble_bound_radius), a
 // non-ShipClass with a real GetShields, an unnameable shield or cloak ref, a
-// zero bubble semi-axis, an invalid transform, and a candidate's set with no
-// view-offset entry while it has an instance. Every geometry refusal of
+// zero bubble semi-axis, an invalid transform, a candidate's set with no
+// view-offset entry while it has an instance, and a candidate listed in
+// `python_candidates` (its class overrides a method the walk reads from the
+// mirror instead: IsDead, IsHidden, GetWorldLocation, ... -- the caller's
+// class flags, native_combat._k2_python_candidates), thrown where the
+// Python first calls one of them (its IsDead). Every geometry refusal of
 // beam_geometry / projectile_geometry (std::invalid_argument) is rethrown as
 // NeedPython. Checks run in the Python's order, so a candidate the Python
 // skips early (shooter, target, dead, hidden, another set, out of reach) is
@@ -78,6 +83,8 @@ struct BeamBlockInputs {
     // Every planet of the step; only those in the shooter's set are read,
     // in this order (which must be each set's object order).
     const std::vector<BeamPlanet>& planets;
+    // Candidates only Python may decide (see NeedPython above); null: none.
+    const std::unordered_set<int64_t>* python_candidates = nullptr;
 };
 
 // beam_blockers.Blocker. `handle` is the ship's Object handle, -1 for a

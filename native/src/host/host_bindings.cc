@@ -4132,7 +4132,9 @@ void k2_contact_fields(py::list& items, const dauntless::combat::K2Contact& c,
     items.append(opt(c.aim_unit));
     items.append(vec(c.hit.point));
     items.append(opt(c.hit.normal));
-    items.append(kTiers[static_cast<int>(c.hit.tier)]);
+    // THE BLOCKER: the impact point IS the bubble entry.
+    items.append(c.point_is_bubble ? "bubble"
+                                   : kTiers[static_cast<int>(c.hit.tier)]);
     items.append(opt(c.bubble));
     items.append(shields);
     items.append(c.flush_dwell);
@@ -18683,7 +18685,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //    target_pos_xyz, dist, aim_unit_xyz | None, impact_xyz,
         //    normal_xyz | None, tier, bubble_xyz | None,
         //    shields_block True / False / None, flush_dwell, writes)
-        //       tier: "mesh", "sphere", "fallback", "origin"
+        //       tier: "mesh", "sphere", "fallback", "origin", "bubble"
+        //       (a blocker's: the impact point IS the bubble entry)
         //   (RUN_PYTHON, ship, ship_pos, writes)
         //   (ASK, query, *args, writes)    -> reply combat_k2_answer
         // The context dict (combat_k2_begin: every key optional, defaults
@@ -18701,6 +18704,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   "python_ships": iterable of Object handles to RUN_PYTHON (())
         //   "pulse": THE DAMAGE PULSE's context (k2_pulse_ctx's dict; absent:
         //       every damage pulse is a CONTACT record)
+        //   "planets": THE BLOCKER's planets, a list of (set handle, Object
+        //       handle or -1, cx, cy, cz, radius, planet_instances value) --
+        //       the value as "iids"' ([])
+        //   "python_candidates": iterable of Object handles the blocker
+        //       leaves to Python (THE BLOCKER, CLASS OVERRIDES) (())
         // A record also carries the damage pulses the kernel applied since
         // the last one (k2_beams.h K2Hit): applied and appended here, each
         // where the walk made it among the record's own writes and entries.
@@ -18745,6 +18753,39 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // THE DAMAGE PULSE (k2_beams.h; k2_pulse_ctx's keys).
             if (d.contains("pulse"))
                 c.pulse = k2_pulse_ctx(d["pulse"].cast<py::dict>());
+            // THE BLOCKER (k2_beams.h; native_combat._k2_planet_rows).
+            if (d.contains("planets")) {
+                std::vector<cb::BeamPlanet> planets;
+                for (auto row : d["planets"]) {
+                    const auto t = row.cast<py::tuple>();
+                    if (t.size() != 7)
+                        throw py::value_error(
+                            "combat K2: a planet row is (set, handle, cx, "
+                            "cy, cz, radius, iid)");
+                    cb::BeamPlanet p;
+                    p.set = t[0].cast<std::int64_t>();
+                    p.handle = t[1].cast<std::int64_t>();
+                    p.centre = {t[2].cast<double>(), t[3].cast<double>(),
+                                t[4].cast<double>()};
+                    p.radius = t[5].cast<double>();
+                    const py::handle iid = t[6];
+                    if (!iid.is_none()) {
+                        if (py::isinstance<scenegraph::InstanceId>(iid)) {
+                            const auto id = iid.cast<scenegraph::InstanceId>();
+                            p.iid = cb::InstanceId{id.index, id.generation};
+                        } else {
+                            p.iid_bad = true;
+                        }
+                    }
+                    planets.push_back(p);
+                }
+                c.planets = std::move(planets);
+            }
+            if (d.contains("python_candidates")) {
+                c.python_candidates.clear();
+                for (auto h : d["python_candidates"])
+                    c.python_candidates.insert(h.cast<std::int64_t>());
+            }
         };
         m.def("combat_k2_kinds", [] {
             py::dict d;
@@ -19205,6 +19246,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           a.tier = static_cast<cb::ResolvedHit::Tier>(k);
                           break;
                       }
+                      case cb::K2Query::blocker: {
+                          // None, ("planet", dist) or ("ship", handle, dist,
+                          // point, normal | None, bubble | None, tier).
+                          if (v.is_none()) break;
+                          const auto t = v.cast<py::tuple>();
+                          const auto kind = t[0].cast<std::string>();
+                          if (kind == "planet") {
+                              a.blocker_kind = 2;
+                              a.dist = t[1].cast<double>();
+                          } else if (kind == "ship") {
+                              a.blocker_kind = 1;
+                              a.handle = t[1].cast<std::int64_t>();
+                              a.dist = t[2].cast<double>();
+                              a.point = t[3].cast<std::array<double, 3>>();
+                              if (!t[4].is_none())
+                                  a.normal = t[4].cast<std::array<double, 3>>();
+                              if (!t[5].is_none())
+                                  a.bubble = t[5].cast<std::array<double, 3>>();
+                          } else {
+                              throw py::value_error(
+                                  "combat K2: unknown blocker kind " + kind);
+                          }
+                          break;
+                      }
                       default:  // bank_step (None), or no ASK: answer() raises
                           break;
                   }
@@ -19213,7 +19278,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("value"),
               "ASK's reply, shaped per query (k2_beams.h): a bool; "
               "aim_point ((x, y, z), has_sub); bubble (x, y, z) or None; "
-              "resolve_hit ((x, y, z), normal or None, tier); bank_step None.");
+              "resolve_hit ((x, y, z), normal or None, tier); bank_step None; "
+              "blocker None, (\"planet\", dist) or (\"ship\", handle, dist, "
+              "(x, y, z), normal or None, bubble or None, tier).");
         m.def("combat_k2_drain",
               [vec] {
                   k2_not_delivering("drain()");
@@ -19335,6 +19402,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
             }
             d["k2_pulse_python_reasons"] = pulse_why;
             d["k2_pulse_python"] = pulse_python;
+            // THE BLOCKER: contacts a ship in the way took, banks a planet
+            // stopped.
+            py::dict blocked;
+            blocked["ship"] = c.blocked_ship;
+            blocked["planet"] = c.blocked_planet;
+            d["k2_blocked"] = blocked;
             return d;
         });
         m.def("combat_k2_last_hits",

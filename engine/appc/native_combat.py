@@ -5581,9 +5581,9 @@ _k2_hl = None
 _k2_cheats = None
 
 _K2_SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "_climb_to_ship")
-_K2_OBJECT_NAMES = ("IsDead", "GetWorldLocation", "GetWorldRotation",
-                    "GetContainingSet", "GetScale", "GetRadius", "GetBaseRadius",
-                    "GetShields")
+_K2_OBJECT_NAMES = ("IsDead", "IsHidden", "GetWorldLocation",
+                    "GetWorldRotation", "GetContainingSet", "GetScale",
+                    "GetRadius", "GetBaseRadius", "GetShields")
 #: role -> (module, stock class name, the names it stands in for), in
 #: isinstance order (a bank is a WeaponSystem, not a PhaserSystem).
 _K2_ROLES = (
@@ -5973,6 +5973,12 @@ class _K2Context:
             self.cheat, self.player = cheat, player
             d["npc_shields_off"] = cheat
             d["player"] = player
+        self._view_delta(d)
+        return d
+
+    def _view_delta(self, d) -> None:
+        """The viewing set's view offset, when it changed (only while some
+        ship has an instance: no instance, no view offset is read)."""
         if self.iids:
             from engine.systems import frames
             view = frames.viewing_set()
@@ -5982,7 +5988,9 @@ class _K2Context:
                 d["view_offsets"] = (
                     {} if h is None or (h >> _KIND_SHIFT) != _kind("Set")
                     else {h: frames.view_offset(view)})
-        return d
+
+    def python_ran(self) -> None:
+        """Non-pure Python ran (a record's effect): nothing to re-read."""
 
     def commit(self) -> None:
         """The kernel took the last delta: its table's key is the staged one."""
@@ -5997,23 +6005,140 @@ class _K2Context:
             self.commit()
 
 
+class _K2PhaserContext(_K2Context):
+    """K2's per-step context with THE BLOCKER's (k2_beams.h): the planets of
+    the sets the step's ships are in (_k2_planet_rows), the candidates only
+    Python may decide (_k2_python_candidates), and a view offset for every
+    one of those sets and for -1 (no set) -- not only the viewing set's, so
+    a blocker candidate with an instance in any of them is traced natively.
+
+    Read at begin and again after any non-pure Python a record ran
+    (python_ran: a CONTACT's effects, a whole ship, a stop, a bank_step),
+    the only Python that can move a planet, a ship between sets or a class;
+    the view offsets also when the viewing set changed."""
+
+    __slots__ = ("ships", "planet_instances", "sets", "stale")
+
+    def __init__(self, ship_instances, ships, planet_instances) -> None:
+        super().__init__(ship_instances)
+        self.ships = ships
+        self.planet_instances = planet_instances
+        self.sets = ()
+        self.stale = True
+
+    def python_ran(self) -> None:
+        self.stale = True
+
+    def _view_delta(self, d) -> None:
+        frames = _frames()
+        view = frames.viewing_set()
+        if not self.stale and view is self.view:
+            return
+        self.view = view
+        if self.stale:
+            self.stale = False
+            self.sets = _k2_step_sets(self.ships)
+            d["planets"] = _k2_planet_rows(self.ships, self.planet_instances,
+                                           self.sets)
+            d["python_candidates"] = _k2_python_candidates(self.ships)
+        offsets = {REF_NONE: None}
+        for h, pSet in self.sets:
+            offsets[h] = frames.view_offset(pSet)
+        d["view_offsets"] = offsets
+
+
+def _k2_step_sets(ships) -> list:
+    """[(Set handle, set), ...]: every set a ship of the step is in
+    (`_containing_set`, what ObjectClass.GetContainingSet returns), once,
+    in first-seen order; a set with no Set row is left out (a ship in it
+    reads -2 there, and the kernel never walks it)."""
+    set_kind = _kind("Set")
+    seen = {}
+    for ship in ships:
+        d = getattr(ship, "__dict__", None)
+        pSet = d.get("_containing_set") if d is not None else None
+        if pSet is None or id(pSet) in seen:
+            continue
+        h = _slot_of(pSet)
+        seen[id(pSet)] = (h, pSet) if (
+            type(h) is int and (h >> _KIND_SHIFT) == set_kind) else None
+    return [e for e in seen.values() if e is not None]
+
+
+def _k2_planet_rows(ships, planet_instances, sets=None) -> list:
+    """THE BLOCKER's planets (k2_beams.h; beam_block.h BeamPlanet): for each
+    set a ship of the step is in, its Planets (a Sun included) in the set's
+    object order -- beam_blockers.planet_rows' order -- each only when its
+    containing set IS that set (first_blocker's own check), as (set handle,
+    Object handle or -1, cx, cy, cz, collisions.world_radius(planet),
+    planet_instances.get(planet))."""
+    from engine.appc.collisions import world_radius
+    from engine.appc.planet import Planet
+    frames = _frames()
+    pi = planet_instances or {}
+    obj_kind = _kind("Object")
+    rows = []
+    for h, pSet in (_k2_step_sets(ships) if sets is None else sets):
+        for obj in pSet._objects.values():
+            if not isinstance(obj, Planet):
+                continue
+            if frames.containing_set(obj) is not pSet:
+                continue
+            ph = _slot_of(obj)
+            if type(ph) is not int or (ph >> _KIND_SHIFT) != obj_kind:
+                ph = REF_NONE
+            c = obj.GetWorldLocation()
+            rows.append((h, ph, c.x, c.y, c.z, world_radius(obj),
+                         pi.get(obj)))
+    return rows
+
+
+def _k2_python_candidates(ships) -> list:
+    """THE BLOCKER, CLASS OVERRIDES (k2_beams.h): the Object handles of the
+    step's ships whose class the K2 class flags call overridden (_k2_flag: a
+    name of its role -- IsDead, IsHidden, GetWorldLocation, GetShields, ...
+    -- resolving outside the engine package, or patched since K2 first saw
+    the class). The native blocker reads those from the mirror, the Python
+    calls them, so first_blocker leaves such a candidate to the ASK."""
+    flagged = None
+    for cls in {type(s) for s in ships}:
+        if _k2_flag(cls)[0]:
+            if flagged is None:
+                flagged = set()
+            flagged.add(cls)
+    if flagged is None:
+        return []
+    out = []
+    for ship in ships:
+        if type(ship) in flagged:
+            h = slot(ship)
+            if h is not None:
+                out.append(h)
+    return out
+
+
 def _k2_points(emitter_xyz, target_xyz, impact_xyz, normal_xyz, tier,
                bubble_xyz) -> tuple:
     """A CONTACT's points as the Python loop held them: (emitter_pos,
     target_pos, impact_point, impact_normal, bubble_entry). The impact IS
     target_pos on the "fallback" tier and IS emitter_pos on the "origin"
     tier (combat._resolve_hit_point / ray_sphere_entry return the very
-    object they were given); the mesh and sphere tiers made their own."""
+    object they were given); the mesh and sphere tiers made their own. The
+    "bubble" tier is a beam blocker's met at its shield bubble with no mesh
+    normal: its point IS the bubble entry (beam_blockers.first_blocker's
+    `point = b`; k2_beams.h, THE BLOCKER)."""
     emitter = TGPoint3(*emitter_xyz)
     target_pos = TGPoint3(*target_xyz)
+    bubble = None if bubble_xyz is None else TGPoint3(*bubble_xyz)
     if tier == "fallback":
         point = target_pos
     elif tier == "origin":
         point = emitter
+    elif tier == "bubble":
+        point = bubble
     else:
         point = TGPoint3(*impact_xyz)
     normal = None if normal_xyz is None else TGPoint3(*normal_xyz)
-    bubble = None if bubble_xyz is None else TGPoint3(*bubble_xyz)
     return emitter, target_pos, point, normal, bubble
 
 
@@ -6118,7 +6243,34 @@ def _k2_answer(rec, walk, cx, dt, ship_instances):
         _k2_hl._phaser_step_bank(walk.obj(args[0]), walk.obj(args[1]),
                                  args[2], dt, ship_instances)
         return None
+    if query == "blocker":
+        return _k2_blocker_answer(args, walk, ship_instances)
     raise RuntimeError("combat K2: unknown ASK %r" % (query,))
+
+
+def _k2_blocker_answer(args, walk, ship_instances):
+    """ASK blocker (k2_beams.h, THE BLOCKER): beam_blockers.first_blocker on
+    the live objects, over the step's ships and planets. A ship is named by
+    its Object handle (pinned: the CONTACT names it next)."""
+    from engine.appc import beam_blockers
+    b = beam_blockers.first_blocker(
+        walk.obj(args[0]), walk.obj(args[1]), TGPoint3(*args[2]),
+        TGPoint3(*args[3]), args[4], beam_blockers.step_ships(),
+        beam_blockers.step_planets(), ship_instances)
+    if b is None:
+        return None
+    if b.kind == "planet":
+        return ("planet", b.dist)
+    h = slot(b.obj)
+    if h is None:
+        raise RuntimeError(
+            "combat K2: the beam blocker %r has no Object row (k2_beams.h, "
+            "THE BLOCKER: CANDIDATE ROWS)" % (b.obj,))
+    walk.pin(b.obj)
+    p, n, bb = b.point, b.normal, b.bubble
+    return ("ship", h, b.dist, (p.x, p.y, p.z),
+            None if n is None else (n.x, n.y, n.z),
+            None if bb is None else (bb.x, bb.y, bb.z), b.tier)
 
 
 def run_k2(ships, dt, ship_instances, cx) -> None:
@@ -6167,18 +6319,24 @@ def _run_k2(ships, dt, ship_instances, cx) -> None:
                 answer = _k2_answer(rec, walk, cx, dt, ship_instances)
                 _heal_part_slots(ships, gen)
                 _h.combat_k2_answer(answer)
+                if rec[1] == "bank_step":
+                    cx.python_ran()
             elif kind == CONTACT:
                 _k2_contact(rec, walk, dt, ship_instances)
+                cx.python_ran()
             elif kind == BANK_STOP:
                 # Only a stop the kernel cannot log (k2_beams.h, RECORDS).
                 bank = walk.obj(rec[1])
                 walk.pin_bank(bank)
                 bank.StopFiring()
+                cx.python_ran()
             elif kind == SYSTEM_STOP:
                 # Only a system whose children it cannot stand in for.
                 walk.obj(rec[1]).StopFiring()
+                cx.python_ran()
             elif kind == RUN_PYTHON:
                 _k2_hl._phaser_step_ship(ships[rec[2]], dt, ship_instances)
+                cx.python_ran()
             elif kind == DONE:
                 break
             else:
@@ -6236,10 +6394,12 @@ def _k2_send_present_constants() -> None:
         _k2_present_sent[0] = consts
 
 
-def k2_phasers(ships, dt, ship_instances) -> bool:
+def k2_phasers(ships, dt, ship_instances, planet_instances=None) -> bool:
     """host_loop's `cb.phasers` step through K2: True when it ran, False when
     the caller must run the step in Python whole (counted by why in
-    counts()["k2_python_step_reasons"])."""
+    counts()["k2_python_step_reasons"]). `planet_instances` is host_loop's
+    (Planet -> InstanceId): THE BLOCKER's planets read their instance from
+    it (k2_beams.h)."""
     drain()                     # a session start (ruling R2)
     why = _k2_step_fallback(ship_instances)
     if why is None:
@@ -6255,7 +6415,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     # A step boundary: the K1 pump's effects may have bumped the generation.
     resolve_stale_part_slots(ships)
     _k2_send_present_constants()
-    cx = _K2Context(ship_instances)
+    cx = _K2PhaserContext(ship_instances, ships, planet_instances)
     ctx = cx.delta()
     ctx["python_ships"] = python_ships
     ctx["trace"] = _k2_host_io._h is not None

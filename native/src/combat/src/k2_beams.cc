@@ -22,6 +22,7 @@
 #include <string>
 #include <utility>
 
+#include "dauntless/combat/beam_block.h"
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/damage.h"
 #include "dauntless/combat/fire_gates.h"
@@ -82,7 +83,7 @@ const char* k2_why_name(K2Why w) {
 const char* k2_query_name(K2Query q) {
     static constexpr const char* kNames[] = {
         "is_dead", "can_detect", "aim_point", "shields_block",
-        "bubble",  "resolve_hit", "bank_step"};
+        "bubble",  "resolve_hit", "bank_step", "blocker"};
     static_assert(std::size(kNames) == static_cast<size_t>(K2Query::kCount));
     const auto i = static_cast<size_t>(q);
     return i < std::size(kNames) ? kNames[i] : "?";
@@ -138,6 +139,17 @@ enum class St : int32_t {
                         //       aim_unit, dist * 1.5); then the contact:
                         //   beam_contact / apply_hit (CONTACT)
     BUBBLE_ANSWER,      //     (ASK bubble answered)
+    BLOCK,              //   if aim_unit is not None: b = beam_blockers.
+                        //       first_blocker(ship, target, emitter_pos,
+                        //       aim_unit, contact_distance(...), ...)
+                        //     if b is not None: if b.kind == "planet":
+                        //       return; target, dist, impact_point,
+                        //       impact_normal, bubble_entry = b's
+    BLOCK_ANSWER,       //     (ASK blocker answered)
+    BLOCK_SHIELDS,      //     (the blocker's shields_block, for the contact)
+    BLOCK_SHIELDS_ANSWER, //   (ASK shields_block answered, for the blocker)
+    PHASER_CONTACT,     //   _phaser_contact(...): beam_contact / apply_hit
+                        //       (a rest, a pulse, or CONTACT)
     BANK_STEP_ANSWER,   //   (ASK bank_step answered: Python ran bank i)
     BANK_NEXT,          //   continue (the next i)
     SHIP_NEXT,          // continue (the next ship)
@@ -196,6 +208,16 @@ struct K2Kernel::Session {
     std::optional<bool> shields;
     bool shields_asked = false;  // `shields` is an ASK's answer
     std::optional<Vec3> bubble;
+    // The impact point IS the bubble entry (a blocker met at its bubble
+    // with no mesh normal: first_blocker's `point = b`).
+    bool point_is_bubble = false;
+
+    // Records emitted this session, and the count at which every session
+    // ship was last seen to have a live row (THE BLOCKER, CANDIDATE ROWS):
+    // only a record's Python can free a row.
+    size_t emitted = 0;
+    size_t rows_checked_at = static_cast<size_t>(-1);
+    bool rows_ok = false;
 
     // The write log since the last record, and, one for one, the value each
     // write replaced (rolled back if the writes never reach Python).
@@ -452,6 +474,7 @@ private:
         s_.st = next;
         s_.ship_recorded = true;
         if (s_.in_bank) s_.bank_recorded = true;
+        ++s_.emitted;
         ++c_.records;
         return r;
     }
@@ -528,6 +551,11 @@ private:
     K2Record contact();
     bool queue_contact();
     bool pulse();
+    // THE BLOCKER (k2_beams.h).
+    bool candidates_rowed();
+    void take_blocker(int64_t handle, double dist, const Vec3& point,
+                      const std::optional<Vec3>& normal,
+                      const std::optional<Vec3>& bubble);
     // `if flush_dwell <= 0.0 and not bank.IsBeamOn(): return` -- the beam
     // has not reached its target yet (inside the beam-on delay, or the bank
     // stopped there): no contact, the walk goes on to the next bank.
@@ -621,6 +649,7 @@ static K2Contact make_contact(const K2Kernel::Session& s) {
     c.shields_block = s.shields;
     c.shields_asked = s.shields_asked;
     c.flush_dwell = *s.flush_dwell;
+    c.point_is_bubble = s.point_is_bubble;
     return c;
 }
 
@@ -724,9 +753,12 @@ bool Walker::pulse() {
         const double drf = b->_damage_radius_factor;
         in.r_hit = drf > 0.0 ? drf : p.default_radius;
         in.damage_hull = level != p.pp_low;
-        // shield_bubble_entry makes its own point: never the impact point.
+        // The target's bubble entry is shield_bubble_entry's own point,
+        // never the impact point; a blocker met at its bubble with no mesh
+        // normal has the bubble AS its impact point (THE BLOCKER).
         in.has_shield_point = s_.bubble.has_value();
         if (in.has_shield_point) in.shield_point = *s_.bubble;
+        in.shield_point_is_point = in.has_shield_point && s_.point_is_bubble;
         in.hit_weapon = p.hit_weapon;
         in.weapon_hit_type = p.weapon_hit_type;
         in.has_instances = p.has_instances;
@@ -754,6 +786,44 @@ bool Walker::pulse() {
     s_.bank_recorded = true;
     s_.st = St::BANK_NEXT;
     return true;
+}
+
+// Every session ship has a live row (THE BLOCKER, CANDIDATE ROWS): the
+// blocker ASK names its answer by handle. Re-read only after a record.
+bool Walker::candidates_rowed() {
+    if (s_.rows_checked_at != s_.emitted) {
+        s_.rows_ok = true;
+        for (const int64_t h : *s_.ships)
+            if (!objrow(h)) {
+                s_.rows_ok = false;
+                break;
+            }
+        s_.rows_checked_at = s_.emitted;
+    }
+    return s_.rows_ok;
+}
+
+// target, dist, impact_point, impact_normal, bubble_entry = (b.obj, b.dist,
+// b.point, b.normal, b.bubble): the ship in the way takes the contact. The
+// tier only tells Python how to rebuild the point (a blocker's is a new
+// point, or the bubble entry itself: point_is_bubble); shields_block is
+// evaluated again, for the blocker.
+void Walker::take_blocker(int64_t handle, double dist, const Vec3& point,
+                          const std::optional<Vec3>& normal,
+                          const std::optional<Vec3>& bubble) {
+    s_.target = handle;
+    s_.dist = dist;
+    s_.hit.point = point;
+    s_.hit.normal = normal;
+    s_.hit.tier =
+        normal ? ResolvedHit::Tier::Mesh : ResolvedHit::Tier::Sphere;
+    s_.bubble = bubble;
+    // `if normal is None: point = b`: the blocker's point IS its bubble.
+    s_.point_is_bubble = bubble.has_value() && !normal.has_value();
+    s_.shields.reset();
+    s_.shields_asked = false;
+    ++c_.blocked_ship;
+    s_.st = St::BLOCK_SHIELDS;
 }
 
 // ── The cursor loop ──────────────────────────────────────────────────────────
@@ -855,6 +925,9 @@ K2Record Walker::run() {
                         s_.st = St::BANK_NEXT;
                         break;
                     }
+                    // THE BLOCKER, CANDIDATE ROWS (before any record).
+                    if (!candidates_rowed())
+                        return bank_fallback(K2Why::StaleRow);
                     bool dead;
                     try {
                         dead = ship_dead(m_, s_.target);
@@ -880,6 +953,8 @@ K2Record Walker::run() {
                     }
                     return emit(K2Kind::BANK_STOP, St::BANK_NEXT, bank);
                 }
+                // THE BLOCKER, CANDIDATE ROWS (before any record).
+                if (!candidates_rowed()) return bank_fallback(K2Why::StaleRow);
                 bool dead;
                 try {
                     dead = ship_dead(m_, s_.target);
@@ -1057,6 +1132,7 @@ K2Record Walker::run() {
             //     max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
             //     fallback_point=target_pos)          -- BEFORE shields_block
             case St::TRACE: {
+                s_.point_is_bubble = false;
                 static const TraceHooks kNoHost;
                 const std::optional<Vec3>& dir = s_.aim_unit;  // HL:1266
                 const double max_dist = s_.dist > 1e-6 ? s_.dist * 1.5 : 0.0;
@@ -1147,8 +1223,8 @@ K2Record Walker::run() {
                         return ask(K2Query::bubble, args, St::BUBBLE_ANSWER);
                     }
                 }
-                if (queue_contact() || pulse()) break;
-                return contact();
+                s_.st = St::BLOCK;
+                break;
             }
             case St::BUBBLE_ANSWER: {
                 const K2Answer a = take_answer();
@@ -1156,9 +1232,106 @@ K2Record Walker::run() {
                     s_.bubble.reset();
                 else
                     s_.bubble = a.point;
+                s_.st = St::BLOCK;
+                break;
+            }
+
+            // if aim_unit is not None:
+            //     b = beam_blockers.first_blocker(ship, target, emitter_pos,
+            //         aim_unit, beam_blockers.contact_distance(emitter_pos,
+            //         impact_point, bubble_entry), beam_blockers.step_ships(),
+            //         beam_blockers.step_planets(), ship_instances)
+            //     if b is not None:
+            //         if b.kind == "planet": return
+            //         target, dist, impact_point, impact_normal,
+            //             bubble_entry = (b.obj, b.dist, b.point, b.normal,
+            //             b.bubble)                 (THE BLOCKER, k2_beams.h)
+            case St::BLOCK: {
+                if (!s_.aim_unit) {
+                    s_.st = St::PHASER_CONTACT;
+                    break;
+                }
+                // contact_distance: _dist(emitter, bubble_entry if it is
+                // not None else impact_point) -- math.sqrt of the squares.
+                const Vec3& p = s_.bubble ? *s_.bubble : s_.hit.point;
+                const double ddx = p[0] - s_.emitter[0];
+                const double ddy = p[1] - s_.emitter[1];
+                const double ddz = p[2] - s_.emitter[2];
+                const double contact_dist =
+                    std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+                const BeamBlockInputs in{m_,
+                                         ctx_.hooks,
+                                         ctx_.iids,
+                                         ctx_.view_offsets,
+                                         ctx_.npc_shields_off,
+                                         ctx_.player,
+                                         *s_.ships,
+                                         ctx_.planets,
+                                         &ctx_.python_candidates};
+                std::optional<BeamBlocker> b;
+                try {
+                    b = first_blocker(in, s_.ship, s_.target, s_.emitter,
+                                      *s_.aim_unit, contact_dist);
+                } catch (const NeedPython&) {
+                    return ask(K2Query::blocker,
+                               {s_.ship, s_.target, s_.emitter, *s_.aim_unit,
+                                contact_dist},
+                               St::BLOCK_ANSWER);
+                }
+                if (!b) {
+                    s_.st = St::PHASER_CONTACT;
+                    break;
+                }
+                if (b->kind == BeamBlocker::Kind::Planet) {
+                    ++c_.blocked_planet;
+                    s_.st = St::BANK_NEXT;  // return: the dwell is dropped
+                    break;
+                }
+                take_blocker(b->handle, b->dist, b->point, b->normal,
+                             b->bubble);
+                break;
+            }
+            case St::BLOCK_ANSWER: {
+                const K2Answer a = take_answer();
+                if (a.blocker_kind == 0) {
+                    s_.st = St::PHASER_CONTACT;
+                    break;
+                }
+                if (a.blocker_kind == 2) {
+                    ++c_.blocked_planet;
+                    s_.st = St::BANK_NEXT;
+                    break;
+                }
+                // CANDIDATE ROWS made every session ship nameable before the
+                // bank's first record, and an ASK answer frees no row.
+                if (!objrow(a.handle))
+                    lost("ASK blocker named a ship with no live Object row "
+                         "(protocol invariant, k2_beams.h THE BLOCKER)");
+                take_blocker(a.handle, a.dist, a.point, a.normal, a.bubble);
+                break;
+            }
+            // The contact's shields_block, for the blocker.
+            case St::BLOCK_SHIELDS:
+                try {
+                    s_.shields = shields_block(m_, s_.target,
+                                               ctx_.npc_shields_off,
+                                               ctx_.player);
+                } catch (const std::invalid_argument&) {
+                    return ask(K2Query::shields_block, {s_.target},
+                               St::BLOCK_SHIELDS_ANSWER);
+                }
+                s_.st = St::PHASER_CONTACT;
+                break;
+            case St::BLOCK_SHIELDS_ANSWER:
+                s_.shields = take_answer().flag;
+                s_.shields_asked = true;
+                s_.st = St::PHASER_CONTACT;
+                break;
+
+            // _phaser_contact(ship, sys_, bank, target, dist, ...)
+            case St::PHASER_CONTACT:
                 if (queue_contact() || pulse()) break;
                 return contact();
-            }
 
             case St::BANK_STEP_ANSWER:
                 take_answer();

@@ -1530,7 +1530,8 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
         try:
             if not (_native_combat.enabled()
                     and _native_combat.k2_phasers(ships_list, dt,
-                                                  ship_instances)):
+                                                  ship_instances,
+                                                  planet_instances)):
                 for ship in ships_list:
                     _phaser_step_ship(ship, dt, ship_instances)
         finally:

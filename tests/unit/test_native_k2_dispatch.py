@@ -916,9 +916,15 @@ def test_asks_answered_in_python(monkeypatch):
 
 
 def test_unviewed_set_asks_resolve_hit(monkeypatch):
-    """The player is in another set, so the fight's set has no entry in the
-    view-offset table: a target with an instance is traced by Python
-    (ASK resolve_hit), exactly as _resolve_hit_point does it."""
+    """The player is in another set. The view-offset table holds an entry
+    for every set a ship of the step is in (THE BLOCKER, k2_beams.h: a
+    blocker candidate's set needs one), the fight's unviewed set included,
+    so a target with an instance there is traced natively with the offset
+    frames.view_offset gives that set -- no ASK resolve_hit any more -- and
+    lands exactly where _resolve_hit_point puts it. (A set with no entry
+    still ASKs: test_native_k2_bindings. The name is the old behaviour's,
+    kept because the generated deep-tier list names it: a rename waits for
+    the next tools/gate_tiers.py generate.)"""
 
     def setup(w, mp):
         other = App.SetClass_Create()
@@ -938,7 +944,7 @@ def test_unviewed_set_asks_resolve_hit(monkeypatch):
     ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 60,
                               instances=_tracked, setup=setup)
     _native_ran(counts)
-    assert counts["k2_ask_queries"]["resolve_hit"] > 0, counts
+    assert counts["k2_ask_queries"]["resolve_hit"] == 0, counts
 
 
 def test_dropped_row_mid_walk_asks_bank_step(monkeypatch):
