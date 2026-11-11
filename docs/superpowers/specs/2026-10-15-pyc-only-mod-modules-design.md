@@ -1,6 +1,7 @@
 # Loading `.pyc`-only mod modules: design
 
 **Status:** approach (b) approved by Mark 2026-10-15, scoped to **Phase 1: loading mod scripts only** (§0). Phase 1 is implemented on branch `feat/pyc-only-mod-modules`, not yet live-verified; Phase 2 is not started.
+**Update 2026-11-11:** D2 (straight-line subset only) is superseded: control-flow recovery landed for Kobayashi Maru's bytecode-only ships and hardpoints, and the oracle now accepts all 1,201 stock modules. See `2026-11-11-legacy-script-parsing-design.md` §3.
 **Date:** 2026-10-15
 **Branch:** `feat/pyc-only-mod-modules` (worktree `.claude/worktrees/pyc-mod-loading`, based on local `main` at `a9a1897f`)
 **Supersedes, once built:** the photon substitution as the *normal* outcome for the LC Intrepid's torpedoes. It stays as the fallback for bytecode this design cannot load. See `weapon_subsystems._resolve_projectile_module` and branch `fix/torp-ammo-fallback-script` (`be914a7b`, not merged).

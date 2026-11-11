@@ -21,14 +21,36 @@ OPCODES = {name: num for num, name in opcodes15.NAMES.items()}
 FUNCTION_FLAGS = 0x0003
 
 
+_RELATIVE = frozenset({"JUMP_FORWARD", "JUMP_IF_FALSE", "JUMP_IF_TRUE",
+                       "FOR_LOOP", "SETUP_LOOP", "SETUP_EXCEPT", "SETUP_FINALLY"})
+
+
 def asm(instructions) -> bytes:
-    """Bytecode for [("NAME",) or ("NAME", arg), ...]."""
+    """Bytecode for [("NAME",) or ("NAME", arg), ...].
+
+    ("LABEL", "x") marks a position without emitting anything, and a jump
+    may name a label as its argument: relative jumps get the distance past
+    their own 3 bytes, JUMP_ABSOLUTE the offset, as the 1.5 compiler writes
+    them."""
+    labels, offset = {}, 0
+    for ins in instructions:
+        if ins[0] == "LABEL":
+            labels[ins[1]] = offset
+        else:
+            offset += 3 if OPCODES[ins[0]] >= opcodes15.HAVE_ARGUMENT else 1
     out = bytearray()
     for ins in instructions:
+        if ins[0] == "LABEL":
+            continue
         num = OPCODES[ins[0]]
         out.append(num)
         if num >= opcodes15.HAVE_ARGUMENT:
-            out += struct.pack("<H", ins[1])
+            arg = ins[1]
+            if isinstance(arg, str):
+                arg = labels[arg]
+                if ins[0] in _RELATIVE:
+                    arg -= len(out) + 2
+            out += struct.pack("<H", arg)
     return bytes(out)
 
 
