@@ -40,10 +40,27 @@ from engine.appc.objects import ObjectClass
 from engine.appc import proximity_table
 from engine.appc.actions import TGAction
 from engine.appc.events import TGEvent
+from engine.core.ids import unregister as _release_id
 import engine.dev_mode as dev_mode
 
 
 # ── Condition system ──────────────────────────────────────────────────────────
+
+def _deref(entry):
+    return entry() if type(entry) is weakref.ref else entry
+
+
+def _handler_freed(cond_ref) -> None:
+    """A weakly held condition handler was freed: drop the dead entries.
+    Nothing else happens here: this runs whenever the GC collects, so any
+    behaviour hung on it would vary with allocation noise. A destroyed
+    ship's conditions are released deterministically at its deletion
+    (engine/appc/ai_teardown.py)."""
+    cond = cond_ref()
+    if cond is None:
+        return
+    cond._handlers = [e for e in cond._handlers if _deref(e) is not None]
+
 
 class TGCondition:
     """Status-bearing object that fires handlers when status changes.
@@ -64,6 +81,12 @@ class TGCondition:
         # of the process and that teardown would never run.
         ids.register_weak(self)
         self._status: int = 0
+        # Weak references to the handlers (ConditionalAI, TGConditionAction,
+        # ConditionEventCreator), as BC's non-owning C++ pointers: a
+        # condition never keeps the AI that watches it alive. Held strongly,
+        # SDK Conditions/ConditionIncomingTorps' module-level
+        # g_dInternalInstances (condition -> code condition -> its AIs ->
+        # their ship) kept every Quick Battle ship alive for good.
         self._handlers: list = []
         self._active: bool = False
 
@@ -80,7 +103,7 @@ class TGCondition:
         if not changed:
             return
         if self._active:
-            for h in list(self._handlers):
+            for h in self._live_handlers():
                 h.ConditionChanged(self)
         # Real Appc posts ET_AI_CONDITION_CHANGED from ConditionScript::SetStatus
         # so composite conditions can watch their children
@@ -104,12 +127,29 @@ class TGCondition:
         App.g_kEventManager.AddEvent(evt)
 
     def AddHandler(self, handler) -> None:
-        if handler not in self._handlers:
-            self._handlers.append(handler)
+        if any(h is handler for h in self._live_handlers()):
+            return
+        try:
+            me = weakref.ref(self)
+            entry = weakref.ref(handler, lambda _r, me=me: _handler_freed(me))
+        except TypeError:
+            entry = handler              # not weakly referenceable: strong
+        self._handlers.append(entry)
 
     def RemoveHandler(self, handler) -> None:
-        if handler in self._handlers:
-            self._handlers.remove(handler)
+        for i, entry in enumerate(self._handlers):
+            if _deref(entry) is handler:
+                del self._handlers[i]
+                return
+
+    def _live_handlers(self) -> list:
+        """The handlers still alive, in registration order."""
+        out = []
+        for entry in self._handlers:
+            h = _deref(entry)
+            if h is not None:
+                out.append(h)
+        return out
 
     def SetActive(self, *args) -> None:
         # SDK signature: SetActive() with no args toggles to active.
@@ -1561,16 +1601,36 @@ class ProximityCheck(ObjectClass):
         self._check_object_ids = []
         self._check_types = []
         proximity_table.touch()
-        # Drop ourselves from the anchor-set's proximity manager so
-        # evaluate_proximity_checks stops walking us.
+        # Drop ourselves from the proximity manager(s) holding us so
+        # evaluate_proximity_checks stops walking us: the anchor's set's, and
+        # the one we were registered with (_manager_set) -- the anchor may
+        # already be out of every set (a deleted ship's ConditionInRange runs
+        # this from __del__). Out of _proximity_checks too: RemoveObject
+        # alone left the entry there, so every retarget's old sphere stayed
+        # registered (empty) for the rest of the mission.
+        managers = []
         anchor = self._anchor
         if anchor is not None and hasattr(anchor, "GetContainingSet"):
             pSet = anchor.GetContainingSet()
             if pSet is not None and hasattr(pSet, "GetProximityManager"):
-                pm = pSet.GetProximityManager()
-                if pm is not None:
-                    pm.RemoveObject(self)
+                managers.append(pSet.GetProximityManager())
+        mset = self.__dict__.get("_manager_set")
+        if mset is not None:
+            managers.append(mset.__dict__.get("_proximity_manager"))
+        for pm in managers:
+            if pm is None:
+                continue
+            pm.RemoveObject(self)
+            checks = pm._proximity_checks
+            if any(c is self for c, _a in checks):
+                checks[:] = [(c, a) for c, a in checks if c is not self]
+                proximity_table.touch()
         self._anchor = None
+        # ...and Delete: BC frees the check here, so its id stops resolving
+        # and the strong id registry stops keeping it (with its native row).
+        # (Imported at module level: ConditionInRange.__del__ runs this at
+        # interpreter shutdown too, when imports fail.)
+        _release_id(self.GetObjID())
 
 
 class ProximityEvent(TGEvent):

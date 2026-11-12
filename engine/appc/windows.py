@@ -11,6 +11,7 @@ import time
 
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.tg_ui.widgets import TGPane
+from engine.core.ids import hold_tree_weakly
 from engine.appc.actions import _DEFAULT_BANNER_FX, _DEFAULT_BANNER_FY
 
 # Pane-index constants, mirrored from the SDK module
@@ -653,7 +654,10 @@ class _STStylizedWindow(TGPane):
     # already a flat copy, i.e. correct here by construction.
 
     def DeleteChild(self, child) -> None:
+        before = len(self._children)
         self._children = [c for c in self._children if c is not child]
+        if len(self._children) != before:
+            hold_tree_weakly((child,))      # BC deletes it (ids.hold_tree_weakly)
 
     def InsertChild(self, index, child, x: float = 0.0, y: float = 0.0,
                     *_extra) -> None:
@@ -796,8 +800,10 @@ class _STStylizedWindow(TGPane):
         return self._children[n] if 0 <= n < len(self._children) else None
 
     def KillChildren(self) -> None:
+        killed = list(self._children)
         self._children.clear()
         self._interior_pane = None
+        hold_tree_weakly(killed)            # BC deletes them (ids.hold_tree_weakly)
 
     # ── Interior/exterior pane (LCARS frame structure) ───────────────────────
     # BC's STStylizedWindow wraps a content pane (interior) and a decorative

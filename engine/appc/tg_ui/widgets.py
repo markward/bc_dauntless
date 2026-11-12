@@ -5,6 +5,7 @@ Conventions match engine/appc/characters.py STMenu/STButton: real classes,
 2026-06-03 mirror spec), lenient casts, no _NamedStub leakage.
 """
 from engine.appc.events import TGEventHandlerObject
+from engine.core.ids import hold_tree_weakly
 from engine.appc.input import (
     WC_BACKSPACE, WC_TAB, WC_LINEFEED, WC_RETURN, WC_SPACE, WC_CURSOR,
 )
@@ -136,13 +137,18 @@ class TGPane(TGEventHandlerObject):
     def DeleteChild(self, child) -> None:
         if isinstance(child, TGPane) and child._visibility_parent is self:
             child._visibility_parent = None
+        before = len(self._children)
         self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
+        if len(self._children) != before:
+            hold_tree_weakly((child,))      # BC deletes it (ids.hold_tree_weakly)
 
     def KillChildren(self) -> None:
         for c, _x, _y in self._children:
             if isinstance(c, TGPane) and c._visibility_parent is self:
                 c._visibility_parent = None
+        killed = list(self._children)
         self._children.clear()
+        hold_tree_weakly(killed)
 
     def SetVisible(self, *args) -> None:      self._visible = True
     def SetNotVisible(self, *args) -> None:   self._visible = False

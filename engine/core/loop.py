@@ -57,7 +57,7 @@ class GameLoop:
             App.g_kRealtimeTimerManager.tick(TICK_DELTA)
 
         from engine.appc.time_slice import g_kAIManager
-        from engine.appc.ai_driver import tick_all_ai
+        from engine.appc.ai_driver import tick_all_ai, release_root_scratch
         from engine.appc.ship_motion import tick_all_ship_motion
         from engine.appc.planet import evaluate_proximity_checks
         from engine.appc.defensive_cloak import tick_defensive_cloak
@@ -69,6 +69,7 @@ class GameLoop:
             tick_defensive_cloak(TICK_DELTA)
         with _prof.scope("gl.ai"):
             tick_all_ai(game_time=game_time)
+            release_root_scratch()
         # ET_SET_ALERT_LEVEL levels posted since the last tick land here, after
         # the AI window, where BC drained its event queue (ShipClass.ProcessEvent).
         from engine.appc.ships import apply_pending_alert_levels

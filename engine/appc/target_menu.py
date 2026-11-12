@@ -11,7 +11,35 @@ Plan: docs/superpowers/plans/2026-05-25-target-list-shim.md
 """
 from __future__ import annotations
 
+import weakref
+
 from engine.appc.characters import STMenu, STTopLevelMenu
+
+# Every live target list, so a destroyed ship's row can be dropped from all
+# of them (forget_ship).
+_menus: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def forget_ship(ship) -> None:
+    """`ship` has been destroyed: drop its cached row from every target list
+    and release the row's widgets from the id registry, as BC deletes them.
+
+    `_row_cache` keeps one row per ship for the life of the menu, and the
+    row holds the ship: every ship a Quick Battle ever spawned stayed alive
+    (with ~200 menu widgets per 11-ship battle) for the session."""
+    from engine.core.ids import unregister
+    for menu in list(_menus):
+        row = menu._row_cache.pop(ship, None)
+        if row is None:
+            continue
+        stack = [row]
+        while stack:
+            widget = stack.pop()
+            obj_id = getattr(widget, "_obj_id", None)
+            if obj_id is not None:
+                unregister(obj_id)
+            for child in list(getattr(widget, "__dict__", {}).get("_children", ())):
+                stack.append(child[0] if isinstance(child, tuple) else child)
 
 
 def _is_targetable(sub) -> bool:
@@ -153,6 +181,7 @@ class STTargetMenu(STTopLevelMenu):
         # a previous set there is no crossing to post on.
         self._listed: frozenset = frozenset()
         super().__init__(label)
+        _menus.add(self)
         # The last ship the player manually selected — the slot BC's
         # persistent-target hint would live in.
         #

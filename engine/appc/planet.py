@@ -787,6 +787,48 @@ class ProximityManager:
             proximity_table.touch()
 
 
+def forget_deleted(obj) -> None:
+    """`obj` has been destroyed: take it out of every proximity check.
+
+    In BC a check attached to an object (ObjectClass.AttachObject) is part
+    of it and goes with it, and a destroyed object is no longer in any
+    check's watch list. Ours kept both: the region set's ProximityManager
+    outlives a Quick Battle, so a check SDK ConditionInRange attached to a
+    battle ship stayed registered and watching the battle's ships -- which
+    kept those ships, their AI and the condition itself alive (its __del__
+    is what removes the check), and every later battle evaluated them."""
+    import App
+    sets = getattr(App.g_kSetManager, "_sets", None)
+    if not sets:
+        return
+    changed = False
+    for pSet in list(sets.values()):
+        pm = pSet.__dict__.get("_proximity_manager")
+        if pm is None:
+            continue
+        checks = pm._proximity_checks
+        if checks:
+            # `_anchor` is ProximityCheck's property over `_anchor_obj`.
+            gone = [c for c, a in checks
+                    if a is obj or c.__dict__.get("_anchor_obj") is obj]
+            if gone:
+                checks[:] = [(c, a) for c, a in checks
+                             if not any(c is g for g in gone)]
+                for g in gone:
+                    pm.RemoveObject(g)
+                changed = True
+            for check, _anchor in checks:
+                watched = check._check_objects
+                if any(o is obj for o, _t in watched):
+                    check._check_objects = [(o, t) for o, t in watched
+                                            if o is not obj]
+                    changed = True
+        if pm._holds(obj):
+            pm._forget(obj)
+    if changed:
+        proximity_table.touch()
+
+
 def evaluate_proximity_checks() -> None:
     """Walk every live ProximityManager and dispatch each ProximityCheck's
     per-tick evaluation.  Called from GameLoop.tick between tick_all_ai and

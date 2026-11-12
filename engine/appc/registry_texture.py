@@ -97,6 +97,11 @@ def reset() -> None:
     _pending.clear()
 
 
+def forget(ship) -> None:
+    """`ship` has been destroyed: drop its entry, which holds it strongly."""
+    _pending.pop(id(ship), None)
+
+
 def _class_of(ship) -> Optional[str]:
     """The ship's class leaf name ("Galaxy") from its `ships.<Class>` script,
     or None."""

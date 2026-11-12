@@ -528,8 +528,14 @@ def _ensure_select_target_initialized(inst) -> None:
     import App
     if not hasattr(inst, "pEventHandler") or inst.pEventHandler is None:
         wrapper = App.TGPythonInstanceWrapper()
-        wrapper.SetPyWrapper(inst)
+        # Stored on the instance BEFORE SetPyWrapper, the SDK's own order
+        # (Preprocessors.py's commented-out SelectTarget.__init__): that is
+        # how SetPyWrapper recognises the owner idiom and holds `inst`
+        # weakly. The other order held it strongly from a wrapper the id
+        # registry keeps, so every SelectTarget (and its ship and targets)
+        # outlived its battle.
         inst.pEventHandler = wrapper
+        wrapper.SetPyWrapper(inst)
     if not hasattr(inst, "dDamageReceived") or inst.dDamageReceived is None:
         inst.dDamageReceived = {}
     App.g_kEventManager.AddBroadcastPythonMethodHandler(
@@ -832,6 +838,29 @@ def tick_all_ai(game_time: float) -> None:
     excluded -- a rock has no attached AI to tick (rock-class spec section 1).
     """
     _aitree_tick_all(game_time, _GLOBALS)
+
+
+def release_root_scratch() -> None:
+    """Reset the per-root-tick scratch the walk leaves behind, exactly as the
+    next root tick's start does (aitree.cc, `if is_root:`). Nothing reads it
+    between root ticks; left set, it pinned the last-ticked ship's AI tree
+    (and, through its targets, a whole ended Quick Battle) until the next
+    AI tick, past the battle's End and its GC freeze. Called by the game
+    loop after tick_all_ai, which stays a bare forward to native
+    (tests/unit/test_ai_no_python_walker.py)."""
+    global _reached_this_tick, _reached_this_tick_all
+    global _reached_this_tick_all_ids, _pending_got_focus
+    if _focus_depth != 0:
+        return                  # called from inside a walk: not a root's end
+    _ooa_cache[0] = None
+    if _reached_this_tick:
+        _reached_this_tick = []
+    if _reached_this_tick_all:
+        _reached_this_tick_all = []
+    if _reached_this_tick_all_ids:
+        _reached_this_tick_all_ids = set()
+    if _pending_got_focus:
+        _pending_got_focus = []
 
 
 def tick_ai(ai, game_time: float) -> int:
