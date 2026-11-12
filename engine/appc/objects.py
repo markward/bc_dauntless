@@ -1743,6 +1743,69 @@ def broadcast_object_deleted(obj) -> None:
         App.g_kEventManager._log_broadcast_failure(
             "ET_DELETE_OBJECT_PUBLIC -> %s" % (
                 obj.GetName() if hasattr(obj, "GetName") else obj), evt)
+    forget_deleted(obj)
+
+
+def forget_deleted(obj) -> None:
+    """Drop every engine-side reference that would outlive a destroyed
+    object, as BC's delete does. Called once the delete notice has been
+    dispatched. Without it, Quick Battle's End freed nothing: every later
+    battle carried each earlier one's ships, AI trees, conditions, event
+    handlers, proximity checks, native combat rows and transform slots."""
+    from engine.appc.projectiles import Torpedo, forget as _forget_torpedo
+    if isinstance(obj, Torpedo):
+        _forget_torpedo(obj)
+    else:
+        from engine.appc import ai_teardown, planet, registry_texture
+        from engine.appc import ship_lifecycle, target_menu
+        from engine.appc.ships import ShipClass
+        if isinstance(obj, ShipClass):
+            ai_teardown.tear_down(obj)
+        planet.forget_deleted(obj)
+        ship_lifecycle.forget(obj)
+        registry_texture.forget(obj)
+        target_menu.forget_ship(obj)
+    release_ids(obj)
+
+
+def release_ids(obj) -> None:
+    """Take a destroyed object, and its subsystems, out of the id registry.
+
+    BC deletes the object here, so its id stops resolving: SDK scripts that
+    kept an id (Actions/ShipScriptActions.py, EffectScriptActions.py) get
+    None from TGObject_GetTGObjectPtr and guard for it. Held in the strong
+    registry instead, a destroyed ship lived for the rest of the session
+    with its AI tree, conditions, handlers, native combat row and transform
+    slot: a Quick Battle's End freed nothing, and every battle after the
+    first ran with all earlier ones still attached. Called AFTER the
+    delete notice, whose handlers receive the object."""
+    from engine.core.ids import unregister
+    obj_id = getattr(obj, "_obj_id", None)
+    if obj_id is None:
+        return
+    unregister(obj_id)
+    from engine.appc.ships import ShipClass
+    if isinstance(obj, ShipClass):
+        from engine.appc.subsystems import iter_subsystems
+        for sub in iter_subsystems(obj):
+            sub_id = getattr(sub, "_obj_id", None)
+            if sub_id is not None:
+                unregister(sub_id)
+    # What is part of the object and goes with it in BC, but is registered
+    # on its own: subsystems a re-run of the ship's setup replaced (no longer
+    # reachable from the ship, still pointing at it through _parent_ship),
+    # and proximity checks attached to it (ProximityCheck._anchor, stored
+    # as _anchor_obj). One registry scan per deletion -- never for a
+    # torpedo, which has neither and is released on every hit.
+    from engine.appc.projectiles import Torpedo
+    if isinstance(obj, Torpedo):
+        return
+    from engine.core import ids
+    for oid, o in list(ids._registry.items()):
+        d = getattr(o, "__dict__", None)
+        if d is not None and (d.get("_parent_ship") is obj
+                              or d.get("_anchor_obj") is obj):
+            unregister(oid)
 
 
 def ObjectClass_Cast(obj) -> "ObjectClass | None":

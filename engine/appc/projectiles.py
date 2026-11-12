@@ -623,10 +623,26 @@ def expire(torpedo: Torpedo) -> None:
         # teardown) and a second call must not double-post the exit event.
         return
     kset = torpedo.GetContainingSet()
-    if kset is None:
-        return
-    kset.RemoveObjectFromSet(torpedo.GetName())
-    _post_set_transition(torpedo, entered=False)
+    if kset is not None:
+        kset.RemoveObjectFromSet(torpedo.GetName())
+        _post_set_transition(torpedo, entered=False)
+    # Gone from the world: its id stops resolving, as in BC, and the strong
+    # id registry no longer keeps it (and its native row) alive for good.
+    # (Not objects.forget_deleted: a torpedo is in no proximity check or
+    # target list, and this runs on every hit.)
+    from engine.appc.objects import release_ids
+    release_ids(torpedo)
+
+
+def forget(torpedo) -> None:
+    """`torpedo` was deleted from its set by someone else (Quick Battle's End
+    flags every torpedo SetDeleteMe; the sweep removes and deletes it): stop
+    flying it. Left in `_active`, it stayed in flight, out of any set, for
+    the session, holding its target ship."""
+    try:
+        _active.remove(torpedo)
+    except ValueError:
+        pass
 
 
 def get_by_id(obj_id):

@@ -327,7 +327,7 @@ def test_tg_condition_action_add_condition_subscribes():
     cond = TGCondition()
     ca.AddCondition(cond)
     # Underlying TGCondition wired up to invoke ConditionChanged.
-    assert ca in cond._handlers
+    assert ca in cond._live_handlers()
 
 
 def test_tg_condition_action_completes_on_condition_change():

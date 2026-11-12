@@ -2,6 +2,8 @@ import sys
 import traceback
 import weakref
 from engine.core.ids import TGObject
+from engine.core.ids import unregister as _release_id
+from engine.core.ids import hold_weakly as _hold_weakly
 from engine.core import stub_telemetry
 
 # Event type IDs.  SDK uses int constants from App.py; here we pick a stable
@@ -118,6 +120,11 @@ ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 0x800498
 class TGEvent(TGObject):
     def __init__(self):
         super().__init__()
+        # Found by id only while something holds it (a timer, a button, a
+        # dispatch in progress); see AddEvent. An event created and never
+        # posted -- a menu row's selection event -- would otherwise live
+        # for the session with the objects it names.
+        _hold_weakly(self)
         self._event_type: int = 0
         self._destination: "TGEventHandlerObject | None" = None
         self._source: "TGObject | None" = None
@@ -694,6 +701,11 @@ class TGPythonInstanceWrapper(TGEventHandlerObject):
     """
     def __init__(self):
         super().__init__()
+        # Lives as long as its owner (which keeps it, the SDK idiom) or a
+        # handler entry, timer event or proximity check naming it does; the
+        # id registry must not keep it, or every condition ever built left a
+        # wrapper behind. Nothing looks a wrapper up by id.
+        _hold_weakly(self)
         self._py_wrapper = None
         self._py_ref = None             # weakref to an owner (SetPyWrapper)
         # Dict initialized eagerly because TGObject.__getattr__ returns a
@@ -880,10 +892,16 @@ class TGEventManager(TGObject):
         PLAYER's indicator from whatever ship the event names. Dropping the
         filter made every NPC's cloak/tractor repaint the player's HUD.
         Mirrors AddBroadcastPythonMethodHandler, which has always filtered.
-        """
+
+        The filter is held weakly (_weak_filter), as the method handlers'
+        is: a handler filtered on an object can never run once that object
+        is gone, and BC drops it with the object. PowerDisplay registers
+        its HUD handlers filtered on the player's subsystems, and Quick
+        Battle recreates the player every battle, so each battle's old
+        player stayed alive in these lists."""
         _validate_event_type(event_type, "AddBroadcastPythonFuncHandler(%s)" % qualified_name)
         self._broadcast_handlers.setdefault(event_type, []).append(
-            (dest, qualified_name, extra[0] if extra else None))
+            (dest, qualified_name, _weak_filter(extra[0]) if extra else None))
 
     def AddBroadcastPythonMethodHandler(
         self, event_type: int, wrapper: "TGPythonInstanceWrapper",
@@ -975,6 +993,24 @@ class TGEventManager(TGObject):
     RemoveBroadcastHandlerForInstance = RemoveBroadcastHandler
 
     def AddEvent(self, event: TGEvent) -> None:
+        """Dispatch `event` now, then release it from the id registry.
+
+        BC deletes an event once it has been processed; nothing looks one up
+        by id afterwards (no SDK script does, and the engine's id lookups
+        are all for objects). Held in the registry, every event ever posted
+        stayed alive with the objects it names as source and destination:
+        a 36-ship Quick Battle left ~7,000 events behind per battle, and
+        they kept its ships and ObjectGroups (with their handlers) alive.
+        A holder that keeps the event (a TGTimer, a button) still has it and
+        can post it again; only the id lookup goes, as in dispatch_passes."""
+        try:
+            self._dispatch(event)
+        finally:
+            obj_id = getattr(event, "_obj_id", None)
+            if obj_id is not None:
+                _release_id(obj_id)
+
+    def _dispatch(self, event: TGEvent) -> None:
         # Destination dispatch is deliberately UNguarded: engine-internal
         # actions rely on ProcessEvent exceptions propagating (see
         # test_loop_fail_bad_timer). Broadcast dispatch below is
@@ -990,9 +1026,19 @@ class TGEventManager(TGObject):
         # mutating the live list shifts later entries left, so the iterator
         # skips the next sibling (bridge_officers.OnSetPlayer — the QB
         # helm-wiring regression) and revisits the re-appended self instead.
+        func_pruned = False
         for bd, name, target in list(
             self._broadcast_handlers.get(event.GetEventType(), [])
         ):
+            if type(target) is _WeakRef:
+                target = target()
+                if target is None:      # the filtered-on object was freed
+                    if not func_pruned:
+                        func_pruned = True
+                        funcs = self._broadcast_handlers.get(event.GetEventType())
+                        if funcs:
+                            funcs[:] = [h for h in funcs if not _filter_dead(h[2])]
+                    continue
             if target is not None and event.GetDestination() is not target:
                 continue
             fn = _resolve_handler(name)

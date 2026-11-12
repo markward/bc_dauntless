@@ -39,6 +39,13 @@ def publish_destroyed(ship) -> None:
     _fanout("destroyed", ship)
 
 
+def forget(ship) -> None:
+    """`ship` was deleted without dying (Quick Battle's End, a mission's
+    DeleteObjectFromSet): drop it from `_live` without telling subscribers
+    it was destroyed. Held there, every ship a battle ended stayed alive."""
+    _live.discard(ship)
+
+
 def snapshot() -> tuple:
     """Currently-live ships, in arbitrary order."""
     return tuple(_live)

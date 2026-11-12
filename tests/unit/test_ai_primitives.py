@@ -295,7 +295,7 @@ def test_conditional_ai_subscribes_as_handler():
     ai = ConditionalAI_Create(None, "X")
     cond = TGCondition()
     ai.AddCondition(cond)
-    assert cond._handlers == [ai]
+    assert cond._live_handlers() == [ai]
 
 
 def test_conditional_ai_evaluation_function_round_trip():

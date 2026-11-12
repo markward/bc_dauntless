@@ -28,6 +28,7 @@ from engine.appc.character_position_zoom import PositionZoomTable
 from engine.appc.character_menu_state import MenuState
 from engine.appc.objects import ObjectClass
 from engine.appc.tg_ui.widgets import TGPane
+from engine.core.ids import hold_tree_weakly
 from engine.appc import crew_speech
 from engine.appc.ai import CSP_NORMAL
 import engine.dev_mode as dev_mode
@@ -253,11 +254,16 @@ class STMenu(ObjectClass):
         if isinstance(child_or_name, str):
             self._buttons.pop(child_or_name, None)
             self._submenus.pop(child_or_name, None)
-            self._children = [c for c in self._children
-                              if not (hasattr(c, "GetLabel") and c.GetLabel() == child_or_name)]
+            kept, deleted = [], []
+            for c in self._children:
+                (deleted if hasattr(c, "GetLabel") and c.GetLabel() == child_or_name
+                 else kept).append(c)
+            self._children = kept
+            hold_tree_weakly(deleted)       # BC deletes them (ids.hold_tree_weakly)
         else:
             if child_or_name in self._children:
                 self._children.remove(child_or_name)
+                hold_tree_weakly((child_or_name,))
             # Drop the label lookups that point at THIS object too, or a
             # later GetButtonW/GetSubmenuW still "finds" the deleted child --
             # the SDK removes by object (HelmMenuHandlers.ExitedSet) and
@@ -320,9 +326,11 @@ class STMenu(ObjectClass):
         return button
 
     def KillChildren(self) -> None:
+        killed = list(self._children)
         self._children.clear()
         self._buttons.clear()
         self._submenus.clear()
+        hold_tree_weakly(killed)            # BC deletes them (ids.hold_tree_weakly)
 
     def SetEnabled(self, *args) -> None:          self._enabled = True
     def SetDisabled(self, *args) -> None:         self._enabled = False

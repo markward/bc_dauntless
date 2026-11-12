@@ -58,17 +58,57 @@ def register_weak(obj) -> None:
     objects whose SDK class relies on __del__ for teardown (TGCondition:
     ConditionInRange removes its ProximityCheck there) — a strong entry
     would defeat that. Resolved by get_object_by_id like a strong entry."""
-    _weak_registry[obj.GetObjID()] = weakref.ref(obj)
+    obj_id = obj.GetObjID()
+    _weak_registry[obj_id] = _weak_entry(obj, obj_id)
 
 
 def hold_weakly(obj) -> None:
     """Move a TGObject's own entry from the strong registry to the weak one:
     still found by id while something holds it, freed with its last
     reference. For TGObjects the SDK creates and drops freely (ObjectGroup:
-    ConditionInRange.SetObjects builds one per retarget)."""
+    ConditionInRange.SetObjects builds one per retarget; every TGEvent)."""
     obj_id = obj.GetObjID()
     if _registry.pop(obj_id, None) is not None:
-        _weak_registry[obj_id] = weakref.ref(obj)
+        _weak_registry[obj_id] = _weak_entry(obj, obj_id)
+
+
+def hold_tree_weakly(roots) -> None:
+    """A UI subtree was deleted (DeleteChild / KillChildren): hold each
+    widget in it, and its descendants, weakly from now on.
+
+    BC deletes the children here. Held strongly, every menu row the SDK
+    rebuilt or removed stayed alive -- Helm's hail and Science's scan
+    buttons hold an event naming their ship, so each removed button kept a
+    destroyed ship alive. Weak rather than gone, because our own code may
+    detach a widget and add it back: while anything holds it, it is still
+    found by id. `roots` may hold the (child, x, y) tuples TGPane keeps."""
+    stack = list(roots)
+    seen = set()
+    while stack:
+        w = stack.pop()
+        if type(w) is tuple:
+            w = w[0] if w else None
+        d = getattr(w, "__dict__", None)
+        if d is None or id(w) in seen:
+            continue
+        seen.add(id(w))
+        obj_id = d.get("_obj_id")
+        if obj_id is not None and _registry.get(obj_id) is w:
+            del _registry[obj_id]
+            _weak_registry[obj_id] = _weak_entry(w, obj_id)
+        children = d.get("_children")
+        if children:
+            stack.extend(children)
+
+
+def _weak_entry(obj, obj_id):
+    """A weak registry entry that removes itself when `obj` is freed. Events
+    are registered weakly, thousands a second in a fight: dead entries left
+    for a lookup to find would grow the dict for the whole session."""
+    def _gone(ref, obj_id=obj_id, entries=_weak_registry):
+        if entries.get(obj_id) is ref:
+            del entries[obj_id]
+    return weakref.ref(obj, _gone)
 
 
 def allocate_id() -> int:
