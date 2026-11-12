@@ -213,18 +213,23 @@ def test_discarded_owner_stops_receiving_and_its_handler_is_dropped():
         gc.enable()
 
 
-def test_dead_owners_are_dropped_when_a_new_handler_registers():
+def test_dead_owners_never_pile_up_as_new_handlers_register():
+    """Registration prunes dead entries only once the list has doubled
+    (constant time per add), so they stay bounded rather than gone at once;
+    the next dispatch drops the rest."""
     import gc
+    from engine.appc import events
     gc.disable()
     try:
         mgr = _fresh_manager()
         calls = []
-        for _ in range(5):
+        for _ in range(500):
             _Owner(mgr, calls)         # each discarded at once
         keeper = _Owner(mgr, calls)
-        assert len(mgr._method_handlers[42]) == 1
+        assert len(mgr._method_handlers[42]) <= events._PRUNE_FLOOR
         _post(mgr)
         assert calls == [42]
+        assert len(mgr._method_handlers[42]) == 1
         del keeper
     finally:
         gc.enable()
