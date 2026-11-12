@@ -116,38 +116,13 @@ def test_tgcondition_del_runs_when_last_reference_dropped():
     assert App.TGObject_GetTGObjectPtr(cid) is None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ConditionInRange wires an App.TGPythonInstanceWrapper() as its event "
-        "handler (self.pEventHandler = App.TGPythonInstanceWrapper(); "
-        "self.pEventHandler.SetPyWrapper(self)). TGPythonInstanceWrapper IS a "
-        "TGObject (via TGEventHandlerObject), and TGObject.__init__ "
-        "unconditionally strong-registers every instance into "
-        "engine.core.ids._registry with no unregister() call anywhere for it "
-        "-- grep engine/: the only unregister() callers are the TGSequence "
-        "classes in engine/appc/actions.py. So the wrapper is immortal, and "
-        "GetPyWrapper() strong-references the ConditionInRange instance back, "
-        "which strong-references the ConditionScript via pCodeCondition -- "
-        "keeping the whole cycle alive for the process lifetime, independent "
-        "of TGCondition's own (now-weak, see the two tests above) registry "
-        "entry. Confirmed with gc.get_referrers: after clearing "
-        "g_kSetManager._sets and g_kEventManager._method_handlers and "
-        "dropping every local reference, the survivor is reached directly "
-        "through engine.core.ids._registry via the TGPythonInstanceWrapper, "
-        "not through TGCondition's registry entry at all. Fixing this needs "
-        "a decision about TGPythonInstanceWrapper's (or TGObject's) own "
-        "registry lifecycle -- a much larger change than TGCondition's, and "
-        "out of scope for the TGCondition_Cast task. See "
-        "test_tgcondition_del_runs_when_last_reference_dropped for the "
-        "isolated proof of the mechanism that task actually fixed."
-    ),
-)
 def test_condition_script_del_still_runs():
     """ConditionInRange.__del__ (Conditions/ConditionInRange.py) removes its
     ProximityCheck: `if self.pProx: self.pProx.RemoveAndDelete()`. Constructor
     args + set fixture mirror tests/unit/test_condition_in_range.py.
-    Currently xfail -- see the reason above."""
+    The wrapper holds its owner weakly (TGPythonInstanceWrapper.SetPyWrapper),
+    so the instance goes with its last outside reference even though the
+    wrapper itself stays in the id registry."""
     from engine.appc.ships import ShipClass
 
     App.g_kSetManager._sets.clear()

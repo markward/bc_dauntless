@@ -326,7 +326,7 @@ def _scene(build_tree, target_y=400.0, torpedo=False, actions=None,
         from engine.appc.ship_motion import _step_ship_motion
         _retire_previous_side()
         from engine.appc.time_slice import g_kAIManager
-        g_kAIManager._procs = []
+        g_kAIManager.clear()
         ours, target = _world(target_y, torpedo)
         ours.SetAI(build_tree(ours, target))
         ships = [ours, target]

@@ -42,6 +42,7 @@ class TimeSliceProcess:
         # time on the first tick that sees this process, because the SDK
         # calls SetDelay AFTER construction (Conditions/ConditionFacingToward.py:118).
         self._next_fire = None
+        self._manager = None            # (manager, epoch) once registered
         # Real Appc's C++ ctor registers the process with the scheduler; SDK
         # scripts never call Add() themselves. The manager holds a weak ref, so
         # dropping the last Python reference (the SDK's way of stopping a
@@ -150,6 +151,7 @@ class TimeSliceProcessManager:
     """
     def __init__(self):
         self._procs: list = []          # list[weakref.ref[TimeSliceProcess]]
+        self._epoch: int = 0            # bumped by clear(); see Add
 
     def _live(self) -> list:
         """Deref, dropping dead entries. The only way to read the queue."""
@@ -167,12 +169,25 @@ class TimeSliceProcessManager:
         return len(self._live())
 
     def Add(self, proc: TimeSliceProcess) -> None:
-        if any(p is proc for p in self._live()):
+        """Register `proc` once. Constant time: the process remembers its
+        manager, so nothing walks the queue (SDK ConditionIncomingTorps
+        starts a timer per instance per torpedo launch, and a walk per start
+        cost the square of the queue). Dead entries go at the next tick."""
+        mark = (self, self._epoch)
+        if getattr(proc, "_manager", None) == mark:
             return
+        proc._manager = mark
         self._procs.append(weakref.ref(proc))
+
+    def clear(self) -> None:
+        """Forget every process. One that outlives this can be added again
+        (its mark is from an older epoch)."""
+        self._procs = []
+        self._epoch += 1
 
     def Remove(self, proc: TimeSliceProcess) -> None:
         self._procs = [r for r in self._procs if r() is not None and r() is not proc]
+        proc._manager = None
 
     def tick(self, game_time: float, real_time: float) -> None:
         """Fire every due process in priority order."""

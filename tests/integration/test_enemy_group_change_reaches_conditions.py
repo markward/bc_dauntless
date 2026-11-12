@@ -173,8 +173,11 @@ def test_group_changed_runs_once_per_event_and_coalesces_per_tick(monkeypatch):
     monkeypatch.setattr(C, "SetObjects", so)
     player = App.Game_GetCurrentPlayer()
     group = App.ObjectGroup()
-    App.ConditionScript_Create("Conditions.ConditionInRange", "ConditionInRange",
-                               400, player.GetName(), group)
+    # Held: a condition nobody keeps is freed and stops listening, as in BC.
+    cond = App.ConditionScript_Create(
+        "Conditions.ConditionInRange", "ConditionInRange",
+        400, player.GetName(), group)
+    assert cond._instance is not None
     assert calls == {"gc": 0, "so": 1}
     seen = []
     for i in range(6):

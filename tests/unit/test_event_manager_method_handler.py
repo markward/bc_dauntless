@@ -166,3 +166,183 @@ def test_reset_clears_broadcast_handlers():
     App.g_kEventManager.AddEvent(evt)
 
     assert fired == [], "stale handler from prior mission fired after reset"
+
+
+# ── Owner lifetime: a discarded SDK object stops listening ──────────────────
+#
+# The SDK idiom makes a cycle: the owner keeps the wrapper
+# (self.pEventHandler) and the wrapper points back at the owner. BC's Python
+# 1.5 has no cyclic collector, and SDK classes rely on __del__ running when
+# the last outside reference goes (Conditions/ConditionIncomingTorps.py), so
+# BC's wrapper cannot own its instance. Ours held it strongly, and the event
+# manager holds the wrapper, so every condition the SDK discarded on a
+# retarget kept receiving broadcasts for the rest of the mission.
+
+class _Owner:
+    """The SDK shape: wrapper stored on the owner BEFORE SetPyWrapper(self)."""
+    def __init__(self, mgr, calls):
+        self.calls = calls
+        self.pEventHandler = TGPythonInstanceWrapper()
+        self.pEventHandler.SetPyWrapper(self)
+        mgr.AddBroadcastPythonMethodHandler(42, self.pEventHandler, "Hit")
+
+    def Hit(self, evt):
+        self.calls.append(evt.GetEventType())
+
+
+def _post(mgr, event_type=42):
+    evt = TGEvent_Create()
+    evt.SetEventType(event_type)
+    mgr.AddEvent(evt)
+
+
+def test_discarded_owner_stops_receiving_and_its_handler_is_dropped():
+    import gc
+    gc.disable()                       # refcount alone must do it, as in BC
+    try:
+        mgr = _fresh_manager()
+        calls = []
+        owner = _Owner(mgr, calls)
+        _post(mgr)
+        assert calls == [42]
+        del owner
+        _post(mgr)
+        assert calls == [42]
+        assert mgr._method_handlers[42] == []
+    finally:
+        gc.enable()
+
+
+def test_dead_owners_are_dropped_when_a_new_handler_registers():
+    import gc
+    gc.disable()
+    try:
+        mgr = _fresh_manager()
+        calls = []
+        for _ in range(5):
+            _Owner(mgr, calls)         # each discarded at once
+        keeper = _Owner(mgr, calls)
+        assert len(mgr._method_handlers[42]) == 1
+        _post(mgr)
+        assert calls == [42]
+        del keeper
+    finally:
+        gc.enable()
+
+
+def test_instance_that_does_not_hold_its_wrapper_is_kept_alive():
+    """A wrapper given an instance nobody else holds (engine and test code
+    do this) must keep it: only the owner idiom is held weakly."""
+    calls = []
+
+    class Spy:
+        def Hit(self, evt):
+            calls.append(evt.GetEventType())
+
+    wrapper = TGPythonInstanceWrapper()
+    wrapper.SetPyWrapper(Spy())
+    mgr = _fresh_manager()
+    mgr.AddBroadcastPythonMethodHandler(42, wrapper, "Hit")
+    import gc
+    gc.collect()
+    _post(mgr)
+    assert calls == [42]
+    assert wrapper.GetPyWrapper() is not None
+
+
+def test_wrapper_with_no_instance_yet_keeps_its_registration():
+    """Registered before SetPyWrapper: not a dead owner, must not be pruned."""
+    calls = []
+
+    class Spy:
+        def Hit(self, evt):
+            calls.append(1)
+
+    wrapper = TGPythonInstanceWrapper()
+    mgr = _fresh_manager()
+    mgr.AddBroadcastPythonMethodHandler(42, wrapper, "Hit")
+    _post(mgr)
+    spy = Spy()
+    wrapper.SetPyWrapper(spy)
+    _post(mgr)
+    assert calls == [1]
+
+
+# ── Target-filter lifetime ───────────────────────────────────────────────────
+#
+# A handler filtered on a destination can only ever fire for that one object.
+# SDK ConditionInRange.SetObjects builds a fresh ObjectGroup on every retarget,
+# registers handlers filtered on it and drops the old group; BC's handlers go
+# with the destination object. Ours kept the old group alive in the handler
+# list, so the list grew by two entries per retarget for the whole mission.
+
+class _Dest:
+    pass
+
+
+class _Listener:
+    def __init__(self):
+        self.calls = 0
+        self.pEventHandler = TGPythonInstanceWrapper()
+        self.pEventHandler.SetPyWrapper(self)
+
+    def Hit(self, evt):
+        self.calls += 1
+
+
+def test_handler_whose_target_was_freed_is_dropped():
+    import gc
+    gc.disable()
+    try:
+        mgr = _fresh_manager()
+        listener = _Listener()
+        for _ in range(5):
+            mgr.AddBroadcastPythonMethodHandler(
+                42, listener.pEventHandler, "Hit", _Dest())   # freed at once
+        live = _Dest()
+        mgr.AddBroadcastPythonMethodHandler(42, listener.pEventHandler, "Hit", live)
+        assert len(mgr._method_handlers[42]) == 1
+        evt = TGEvent_Create()
+        evt.SetEventType(42)
+        evt.SetDestination(live)
+        mgr.AddEvent(evt)
+        assert listener.calls == 1
+    finally:
+        gc.enable()
+
+
+def test_target_filter_does_not_keep_the_target_alive():
+    import gc
+    import weakref
+    gc.disable()
+    try:
+        mgr = _fresh_manager()
+        listener = _Listener()
+        dest = _Dest()
+        ref = weakref.ref(dest)
+        mgr.AddBroadcastPythonMethodHandler(42, listener.pEventHandler, "Hit", dest)
+        del dest
+        assert ref() is None
+        _post(mgr)                      # an untargeted event never matched it
+        assert listener.calls == 0
+        assert mgr._method_handlers[42] == []
+    finally:
+        gc.enable()
+
+
+def test_remove_matches_a_live_target():
+    mgr = _fresh_manager()
+    listener = _Listener()
+    a, b = _Dest(), _Dest()
+    mgr.AddBroadcastPythonMethodHandler(42, listener.pEventHandler, "Hit", a)
+    mgr.AddBroadcastPythonMethodHandler(42, listener.pEventHandler, "Hit", b)
+    mgr.AddBroadcastPythonMethodHandler(42, listener.pEventHandler, "Hit", a)
+    assert len(mgr._method_handlers[42]) == 2
+    mgr.RemoveBroadcastHandler(42, listener.pEventHandler, "Hit", a)
+    assert len(mgr._method_handlers[42]) == 1
+    for dest in (a, b):
+        evt = TGEvent_Create()
+        evt.SetEventType(42)
+        evt.SetDestination(dest)
+        mgr.AddEvent(evt)
+    assert listener.calls == 1
