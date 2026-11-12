@@ -799,6 +799,59 @@ def _handler_dead(entry) -> bool:
     return _owner_gone(entry[0]) or _filter_dead(entry[2])
 
 
+# A handler list is pruned of dead entries on registration only once it
+# reaches this size and twice its size after the last prune (amortised
+# constant time per registration).
+_PRUNE_FLOOR = 32
+
+
+class _HandlerList(list):
+    """One event type's method-handler list, carrying the dedupe index that
+    AddBroadcastPythonMethodHandler reads instead of walking the list.
+
+    `_dedupe` is [length, {key: entry}, length at last prune] or None. It is
+    valid only while the list still has that length: code outside the event
+    manager filters these lists in place (mission_change's
+    _drop_event_handlers), and any such change rebuilds it on the next
+    registration. It lives on the list, not the manager, so clearing
+    `_method_handlers` frees the index with the entries."""
+    __slots__ = ("_dedupe",)
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._dedupe = None
+
+
+def _reindex(handlers: "_HandlerList") -> list:
+    keys = {}
+    for h in handlers:
+        key = _handler_key(h)
+        if key is not None and key not in keys:
+            keys[key] = h           # the first occurrence: the one that runs
+    dedupe = [len(handlers), keys, len(handlers)]
+    handlers._dedupe = dedupe
+    return dedupe
+
+
+def _dedupe_of(handlers: "_HandlerList") -> list:
+    dedupe = handlers._dedupe
+    if dedupe is None or dedupe[0] != len(handlers):
+        dedupe = _reindex(handlers)
+    return dedupe
+
+
+def _handler_key(entry):
+    """The dedupe-index key of a stored (wrapper, method, filter) entry:
+    (id(wrapper), method, id(filter target) or None). None for an entry
+    whose filter is already freed: it can never match a registration."""
+    target = _filter_target(entry[2])
+    if target is None:
+        if entry[2] is not None:
+            return None
+        return (id(entry[0]), entry[1], None)
+    return (id(entry[0]), entry[1], id(target))
+
+
 class TGEventManager(TGObject):
     def __init__(self):
         super().__init__()
@@ -847,20 +900,41 @@ class TGEventManager(TGObject):
         re-registers its handlers on every run -- from SetTarget and from its
         own GroupChanged handler, which re-registers GroupChanged itself -- so
         appending blindly doubled that handler per ET_OBJECT_GROUP_CHANGED.
-        Identity, not ==: `_Stub.__eq__` is type-based."""
+        Identity, not ==: `_Stub.__eq__` is type-based.
+
+        Constant time: the duplicate check reads an index, never the list.
+        SDK ConditionInRange.SetTarget registers a handler set per AI
+        retarget, and walking every handler of the type per registration
+        (thousands in a large Quick Battle) made each retarget cost
+        milliseconds -- several on one tick were the 25-30 ms gl.ai hitch.
+        Dead entries (owner or filter freed) never run; they are dropped at
+        dispatch, as before, and here whenever the list has doubled since
+        its last prune, so the list stays within twice its live size."""
         _validate_event_type(event_type, "AddBroadcastPythonMethodHandler(%s)" % method_name)
-        handlers = self._method_handlers.setdefault(event_type, [])
-        dead = False
-        for h in handlers:
-            if _handler_dead(h):
-                dead = True
-            elif (h[0] is wrapper and h[1] == method_name
-                    and _filter_target(h[2]) is target):
+        handlers = self._method_handlers.get(event_type)
+        if type(handlers) is not _HandlerList:
+            handlers = _HandlerList(handlers or ())
+            self._method_handlers[event_type] = handlers
+        dedupe = _dedupe_of(handlers)
+        key = (id(wrapper), method_name,
+               None if target is None else id(target))
+        found = dedupe[1].get(key)
+        stale = False
+        if found is not None:
+            if (found[0] is wrapper and not _handler_dead(found)
+                    and _filter_target(found[2]) is target):
                 return
-        if dead:
+            # The indexed entry is dead: its filter was freed (and the id
+            # possibly reused by `target`) or its owner was.
+            stale = True
+        if stale or len(handlers) >= max(2 * dedupe[2], _PRUNE_FLOOR):
             # In place: a dispatch in progress iterates a snapshot.
             handlers[:] = [h for h in handlers if not _handler_dead(h)]
-        handlers.append((wrapper, method_name, _weak_filter(target)))
+            dedupe = _reindex(handlers)
+        entry = (wrapper, method_name, _weak_filter(target))
+        handlers.append(entry)
+        dedupe[1][key] = entry
+        dedupe[0] = len(handlers)
 
     def RemoveBroadcastHandler(
         self, event_type: int, dest_or_wrapper, qualified_name_or_method: str,
@@ -886,7 +960,16 @@ class TGEventManager(TGObject):
         for i, (w, m, t) in enumerate(method_handlers):
             if (w is dest_or_wrapper and m == qualified_name_or_method
                     and not _filter_dead(t) and _filter_target(t) is target):
+                entry = method_handlers[i]
                 del method_handlers[i]
+                # Keep the dedupe index in step (it is rebuilt instead when
+                # it was already out of step with this list).
+                dedupe = getattr(method_handlers, "_dedupe", None)
+                if dedupe is not None and dedupe[0] == len(method_handlers) + 1:
+                    key = _handler_key(entry)
+                    if dedupe[1].get(key) is entry:
+                        del dedupe[1][key]
+                    dedupe[0] = len(method_handlers)
                 return
 
     RemoveBroadcastHandlerForInstance = RemoveBroadcastHandler
@@ -955,6 +1038,8 @@ class TGEventManager(TGObject):
         handlers = self._method_handlers.get(event_type)
         if handlers:
             handlers[:] = [h for h in handlers if not _handler_dead(h)]
+            if type(handlers) is _HandlerList:
+                _reindex(handlers)
 
     @staticmethod
     def _log_broadcast_failure(handler_desc: str, event: TGEvent) -> None:
