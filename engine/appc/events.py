@@ -1,5 +1,6 @@
 import sys
 import traceback
+import weakref
 from engine.core.ids import TGObject
 from engine.core import stub_telemetry
 
@@ -694,16 +695,48 @@ class TGPythonInstanceWrapper(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
         self._py_wrapper = None
+        self._py_ref = None             # weakref to an owner (SetPyWrapper)
         # Dict initialized eagerly because TGObject.__getattr__ returns a
         # _Stub (not None) for missing attrs, so the lazy `getattr(..., None)`
         # idiom would silently mis-route registrations into a throwaway Stub.
         self._method_handlers: dict[int, list[str]] = {}
 
     def SetPyWrapper(self, instance) -> None:
+        """Point the wrapper at `instance`.
+
+        An instance that keeps this wrapper on itself (the SDK idiom above:
+        `self.pEventHandler = wrapper` and then `SetPyWrapper(self)`) is held
+        WEAKLY. BC's wrapper cannot own its instance: Python 1.5 has no
+        cyclic collector, and SDK classes rely on being freed when their last
+        outside reference goes (Conditions/ConditionIncomingTorps.py swaps
+        its internal object on a retarget and never unregisters the old
+        one). Held strongly, every discarded condition stayed on the event
+        bus for the rest of the mission. Any other instance is held strongly,
+        as before: engine and test code hand over objects nobody else keeps."""
+        self._py_wrapper = None
+        self._py_ref = None
+        if instance is None:
+            return
+        held = getattr(instance, "__dict__", None)
+        if isinstance(held, dict) and any(v is self for v in held.values()):
+            try:
+                self._py_ref = weakref.ref(instance)
+                return
+            except TypeError:
+                pass                    # not weakly referenceable
         self._py_wrapper = instance
 
     def GetPyWrapper(self):
+        ref = self._py_ref
+        if ref is not None:
+            return ref()
         return self._py_wrapper
+
+    def _owner_gone(self) -> bool:
+        """True once a weakly held owner has been freed: this wrapper's
+        broadcast handlers are dead and the event manager drops them."""
+        ref = self._py_ref
+        return ref is not None and ref() is None
 
     def AddPythonMethodHandlerForInstance(self, event_type: int, method_name: str) -> None:
         """Register a self-targeted method handler. Used by SDK conditions
@@ -717,7 +750,7 @@ class TGPythonInstanceWrapper(TGEventHandlerObject):
         the wrapped Python instance. Overrides the parent's qualified-
         function dispatch since this wrapper uses instance methods."""
         names = self._method_handlers.get(event.GetEventType(), [])
-        py = self._py_wrapper
+        py = self.GetPyWrapper()
         if py is None:
             return
         for name in names:
@@ -726,13 +759,55 @@ class TGPythonInstanceWrapper(TGEventHandlerObject):
                 fn(event)
 
 
+def _owner_gone(wrapper) -> bool:
+    """True for a wrapper whose weakly held owner is gone. Anything without
+    the method (a stub, a test double) is never treated as dead."""
+    gone = getattr(type(wrapper), "_owner_gone", None)
+    return gone is not None and gone(wrapper)
+
+
+_WeakRef = weakref.ref
+
+
+def _weak_filter(target):
+    """A method handler's destination filter, held weakly where possible.
+
+    The filter matches by identity, so once nothing else holds the object no
+    event can name it and the handler can never run again. BC drops such
+    handlers with the destination object; SDK ConditionInRange.SetObjects
+    relies on that (a fresh ObjectGroup per retarget, the old one dropped,
+    its handlers never removed)."""
+    if target is None:
+        return None
+    try:
+        return weakref.ref(target)
+    except TypeError:
+        return target                   # not weakly referenceable: as before
+
+
+def _filter_target(stored):
+    return stored() if type(stored) is _WeakRef else stored
+
+
+def _filter_dead(stored) -> bool:
+    return type(stored) is _WeakRef and stored() is None
+
+
+def _handler_dead(entry) -> bool:
+    """A (wrapper, method, filter) entry that can never run again: its owner
+    was freed, or the one object it was filtered on was."""
+    return _owner_gone(entry[0]) or _filter_dead(entry[2])
+
+
 class TGEventManager(TGObject):
     def __init__(self):
         super().__init__()
         # {event_type: [(dest_obj, qualified_name, target), ...]}
         self._broadcast_handlers: dict[
             int, list[tuple["TGEventHandlerObject", str, object]]] = {}
-        # {event_type: [(wrapper, method_name, target), ...]}; eager init —
+        # {event_type: [(wrapper, method_name, filter), ...]}; `filter` is
+        # None, a weakref to the destination object, or the object itself
+        # when it cannot be weakly referenced (_weak_filter). Eager init —
         # see TGPythonInstanceWrapper note about TGObject.__getattr__ stubs.
         self._method_handlers: dict[
             int, list[tuple["TGPythonInstanceWrapper", str, object]]
@@ -775,10 +850,17 @@ class TGEventManager(TGObject):
         Identity, not ==: `_Stub.__eq__` is type-based."""
         _validate_event_type(event_type, "AddBroadcastPythonMethodHandler(%s)" % method_name)
         handlers = self._method_handlers.setdefault(event_type, [])
-        for w, m, t in handlers:
-            if w is wrapper and m == method_name and t is target:
+        dead = False
+        for h in handlers:
+            if _handler_dead(h):
+                dead = True
+            elif (h[0] is wrapper and h[1] == method_name
+                    and _filter_target(h[2]) is target):
                 return
-        handlers.append((wrapper, method_name, target))
+        if dead:
+            # In place: a dispatch in progress iterates a snapshot.
+            handlers[:] = [h for h in handlers if not _handler_dead(h)]
+        handlers.append((wrapper, method_name, _weak_filter(target)))
 
     def RemoveBroadcastHandler(
         self, event_type: int, dest_or_wrapper, qualified_name_or_method: str,
@@ -802,7 +884,8 @@ class TGEventManager(TGObject):
         # Method handlers: (wrapper, method_name, target).
         method_handlers = self._method_handlers.get(event_type, [])
         for i, (w, m, t) in enumerate(method_handlers):
-            if w is dest_or_wrapper and m == qualified_name_or_method and t is target:
+            if (w is dest_or_wrapper and m == qualified_name_or_method
+                    and not _filter_dead(t) and _filter_target(t) is target):
                 del method_handlers[i]
                 return
 
@@ -836,12 +919,27 @@ class TGEventManager(TGObject):
                 except Exception:
                     self._log_broadcast_failure(name, event)
         # Method-broadcast handlers (new). Snapshot for the same reason.
-        for wrapper, method_name, target in list(
+        pruned = False
+        for entry in list(
             self._method_handlers.get(event.GetEventType(), [])
         ):
+            wrapper, method_name, target = entry
+            # Inline _handler_dead: this loop is hot (every hit event).
+            if type(target) is _WeakRef:
+                target = target()
+                if target is None:      # the filtered-on object was freed
+                    if not pruned:
+                        pruned = True
+                        self._drop_dead_method_handlers(event.GetEventType())
+                    continue
             if target is not None and event.GetDestination() is not target:
                 continue
             py = wrapper.GetPyWrapper()
+            if py is None:
+                if not pruned and _owner_gone(wrapper):
+                    pruned = True
+                    self._drop_dead_method_handlers(event.GetEventType())
+                continue
             if py is not None:
                 method = getattr(py, method_name, None)
                 if method is not None:
@@ -851,6 +949,12 @@ class TGEventManager(TGObject):
                         self._log_broadcast_failure(
                             "%s.%s" % (type(py).__name__, method_name), event
                         )
+
+    def _drop_dead_method_handlers(self, event_type: int) -> None:
+        """Drop every handler of `event_type` whose owner has been freed."""
+        handlers = self._method_handlers.get(event_type)
+        if handlers:
+            handlers[:] = [h for h in handlers if not _handler_dead(h)]
 
     @staticmethod
     def _log_broadcast_failure(handler_desc: str, event: TGEvent) -> None:

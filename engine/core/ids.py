@@ -61,6 +61,16 @@ def register_weak(obj) -> None:
     _weak_registry[obj.GetObjID()] = weakref.ref(obj)
 
 
+def hold_weakly(obj) -> None:
+    """Move a TGObject's own entry from the strong registry to the weak one:
+    still found by id while something holds it, freed with its last
+    reference. For TGObjects the SDK creates and drops freely (ObjectGroup:
+    ConditionInRange.SetObjects builds one per retarget)."""
+    obj_id = obj.GetObjID()
+    if _registry.pop(obj_id, None) is not None:
+        _weak_registry[obj_id] = weakref.ref(obj)
+
+
 def allocate_id() -> int:
     """Hand out the next object id without creating a TGObject. For classes
     that must be findable via TGObject_GetTGObjectPtr but deliberately are

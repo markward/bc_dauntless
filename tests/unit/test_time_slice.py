@@ -247,3 +247,47 @@ def test_bc_spacing_under_uneven_frames_never_runs_early():
         now[0] += step
     gaps = [b - a for a, b in zip(calls, calls[1:])]
     assert gaps and min(gaps) > 5.0 and max(gaps) <= 5.0 + worst + 1e-9
+
+
+def test_add_does_not_scan_the_process_list():
+    """Add used to walk every registered process twice (a liveness sweep and
+    an identity scan), so a burst of timer starts cost the square of the
+    queue: SDK ConditionIncomingTorps starts one per instance per torpedo
+    launch. Counted, not timed."""
+    from engine.appc import time_slice
+
+    mgr = TimeSliceProcessManager()
+    kept = [TimeSliceProcess(manager=mgr) for _ in range(200)]
+
+    class _CountingList(list):
+        walks = 0
+
+        def __iter__(self):
+            _CountingList.walks += 1
+            return super().__iter__()
+
+    mgr._procs = _CountingList(mgr._procs)
+    extra = TimeSliceProcess(manager=mgr)
+    mgr.Add(extra)                     # a repeat Add stays a no-op
+    assert _CountingList.walks == 0
+    assert mgr.count() == 201
+    del kept
+
+
+def test_add_after_remove_registers_again():
+    mgr = TimeSliceProcessManager()
+    proc = TimeSliceProcess(manager=mgr)
+    mgr.Remove(proc)
+    assert mgr.count() == 0
+    mgr.Add(proc)
+    mgr.Add(proc)
+    assert mgr.count() == 1
+
+
+def test_clear_lets_a_surviving_process_register_again():
+    mgr = TimeSliceProcessManager()
+    proc = TimeSliceProcess(manager=mgr)
+    mgr.clear()
+    assert mgr.count() == 0
+    mgr.Add(proc)
+    assert mgr.count() == 1

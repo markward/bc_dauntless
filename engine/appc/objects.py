@@ -1346,6 +1346,10 @@ class ObjectGroup(TGEventHandlerObject):
         # does RemoveAllNames(); AddName(sTarget) post-construction).
         self._default_flags: set[int] = set()
         ObjectGroup._live.add(self)
+        # Not kept alive by the id registry, for the same reason as _live:
+        # a dropped group must go, and the handlers filtered on it with it.
+        from engine.core import ids as _ids
+        _ids.hold_weakly(self)
 
     def AddName(self, name: str) -> None:
         added = name not in self._names

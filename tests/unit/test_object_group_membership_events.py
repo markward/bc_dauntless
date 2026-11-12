@@ -363,3 +363,26 @@ def test_a_group_that_never_armed_group_changed_posts_nothing():
     grp.AddName("Bart")
     _boundary()
     assert rec.dests == []
+
+
+def test_a_dropped_group_is_freed_without_the_collector():
+    """The id registry held every ObjectGroup strongly, so a group the SDK
+    dropped (ConditionInRange.SetObjects builds a new one per retarget) lived
+    for the rest of the process, and so did the handlers filtered on it."""
+    import gc
+    import weakref
+    gc.disable()
+    try:
+        g = App.ObjectGroup()
+        gid = g.GetObjID()
+        assert App.TGObject_GetTGObjectPtr(gid) is g      # findable while held
+        ref = weakref.ref(g)
+        del g
+        assert ref() is None
+        assert App.TGObject_GetTGObjectPtr(gid) is None
+        gi = App.ObjectGroupWithInfo()
+        ref = weakref.ref(gi)
+        del gi
+        assert ref() is None
+    finally:
+        gc.enable()

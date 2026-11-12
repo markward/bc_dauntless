@@ -1736,7 +1736,7 @@ def _reset_leakable_engine_globals():
     # any process a test still needs re-adds itself (or was never dropped by
     # the SDK module, in which case it's the leak we're clearing).
     try:
-        App.g_kAIManager._procs.clear()
+        App.g_kAIManager.clear()
     except Exception:
         pass
     # Skip-candidate registry tracks actions whose deferred-completion timers
