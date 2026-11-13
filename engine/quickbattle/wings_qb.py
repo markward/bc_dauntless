@@ -5,7 +5,11 @@ Armed from `battle_end.begin` for every plan-driven battle (no-op when
 `engine.wings.service.enabled()` is false, the setup screen's "Wing
 commanders" switch is Off (`plan.wings`), or BC's own GenerateShips ran):
 
-- One wing per non-neutral group that has a member, id ``"qb:<group id>"``.
+- One wing per non-neutral group that has a member, id ``"qb:<group id>"``,
+  and whose setup holds at least two ships (`group_sizes`: the player counts
+  in its own group, late and station ships count). A group of one ship gets
+  no wing and fights with its stock AI (Mark, 2026-11-13): a lone ship has
+  nobody to lead, and a wing still changed how it fought.
   Members are the MOBILE ships (an impulse engine with an authored max
   speed > 0) of the orders whose AI module (`spawn._details`, the same
   lookup that fills g_kShips) is QuickBattleAI or QuickBattleFriendlyAI.
@@ -107,6 +111,15 @@ def _member_module(qb, order):
     return ai if ai in MEMBER_MODULES else None
 
 
+def group_sizes(plan) -> dict:
+    """QB group id -> how many ships its setup holds: every order (late
+    and station ones too) plus the player in its own group."""
+    sizes = {plan.player.group_id: 1}
+    for order in plan.orders:
+        sizes[order.group_id] = sizes.get(order.group_id, 0) + 1
+    return sizes
+
+
 def arm(qb, plan) -> None:
     """Create, fill and arm the battle's wings and wrap the member AI
     modules. Never called with a stale battle: resets first."""
@@ -120,7 +133,10 @@ def arm(qb, plan) -> None:
     groups: dict = {}            # group id -> (allegiance, [initial names])
     late: set = set()            # group ids with a late order
     modules: list = []
+    sizes = group_sizes(plan)
     for n, order in enumerate(plan.orders, start=1):
+        if sizes[order.group_id] < 2:
+            continue             # a lone ship fights stock (Mark 2026-11-13)
         ai = _member_module(qb, order)
         if ai is None:
             continue

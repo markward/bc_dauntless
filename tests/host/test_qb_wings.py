@@ -48,6 +48,27 @@ def _name_list(eids):
     return [names[e][0] for e in eids]
 
 
+def _km_pair(panel, allegiance="friendly", ship="Akira"):
+    """_km's scene with a Galor added to the Warbird's group: a group of
+    one ship gets no wing. Returns the protected ship's and the Galor's
+    object names (adding the Galor renumbers the protected ship)."""
+    _km(panel, allegiance=allegiance, ship=ship)
+    (galor_eid,) = _enemies(panel, "Galor")
+    names = _names()
+    protected_eid = panel.scenario.groups[2].entries[0].id
+    return names[protected_eid][0], names[galor_eid][0]
+
+
+def _hunt_pair(panel):
+    """_hunt's scene with a second friendly Akira (appended last, so no
+    name moves): its friendly group then keeps a wing."""
+    keldon, galor, akira = _hunt(panel)
+    g = panel.scenario.groups[2]
+    _do(panel, "add:Akira:%s:1" % g.id)
+    (extra_eid,) = [e.id for e in panel.scenario.group(g.id).entries][1:]
+    return keldon, galor, akira, _names()[extra_eid][0]
+
+
 def _is_wing_tree(ship):
     return ship.GetAI() is not None and ship.GetAI().GetName() == "WingPriorityList"
 
@@ -120,7 +141,7 @@ def test_members_share_wing_target_group(world):
 def test_stations_and_neutrals_not_members(world):
     hl, _c, panel, QB = world
     from engine.wings import roster
-    _enemies(panel, "Warbird")
+    _enemies(panel, "Warbird", "Galor")
     base, akira = _name_list(_group(panel, "friendly", "FedStarbase", "Akira"))
     (transport,) = _name_list(_group(panel, "neutral", "Transport"))
     _go(hl, panel)
@@ -142,10 +163,11 @@ def test_km_priorities_reach_wing_group(world):
     hl, _c, panel, QB = world
     from engine.quickbattle import km_targeting
     from engine.wings import brain
-    protected = _km(panel, allegiance="friendly", ship="Akira")
+    protected, galor = _km_pair(panel, allegiance="friendly", ship="Akira")
     _go(hl, panel)
     ships = _ships(QB)
     warbird = ships["Warbird-1"]
+    _put(ships[galor], 0.0, -2000.0, 0.0)         # the wingmate, out of it
     ew = _wing_for(panel, 1)
     # km composed on top: the member still gets the WING's group.
     assert _target_group(warbird) is ew.target_group
@@ -220,7 +242,8 @@ def test_later_wave_not_in_chain(world):
     from engine.quickbattle import spawn, wings_qb
     from engine.wings import roster
     _enemies(panel, "Warbird")
-    (first,) = _name_list(_group(panel, "enemy", "Galor", warp_in=1))
+    first, _second = _name_list(_group(panel, "enemy", "Galor", "Galor",
+                                       warp_in=1))
     _go(hl, panel)
     _arrive_late()
     lw = _wing_for(panel, 2)
@@ -246,10 +269,11 @@ def test_enemy_wing_prefers_protected_when_equal(world, allegiance, ship):
     goes for the Defeat-protected ship, a neutral one included."""
     hl, _c, panel, QB = world
     from engine.wings import brain
-    name = _km(panel, allegiance=allegiance, ship=ship)
+    name, galor = _km_pair(panel, allegiance=allegiance, ship=ship)
     _go(hl, panel)
     ships = _ships(QB)
     warbird, protected, player = ships["Warbird-1"], ships[name], _player()
+    _put(ships[galor], 0.0, -2000.0, 0.0)         # the wingmate, out of it
     ew = _wing_for(panel, 1)
     assert _target_group(warbird) is ew.target_group
     # Seeded before the first tick, at the member's CreateAI.
@@ -268,9 +292,10 @@ def test_enemy_wing_prefers_protected_when_equal(world, allegiance, ship):
 def test_friendly_wing_prefers_hunt_target_when_equal(world):
     hl, _c, panel, QB = world
     from engine.wings import brain
-    keldon, galor, akira = _hunt(panel)
+    keldon, galor, akira, extra = _hunt_pair(panel)
     _go(hl, panel)
     ships = _ships(QB)
+    _put(ships[extra], 0.0, -2000.0, 0.0)         # the wingmate, out of it
     fw = _wing_for(panel, 2)
     assert _target_group(ships[akira]) is fw.target_group
     _put(ships[akira], 0.0, 0.0, 0.0)             # nose along +Y
@@ -310,7 +335,8 @@ def test_reset_on_end_and_swap_clears_wings(world):
     hl, _c, panel, QB = world
     from engine.quickbattle import km_targeting, wings_qb
     from engine.wings import roster, service
-    _km(panel, allegiance="friendly", ship="Akira")
+    _km_pair(panel, allegiance="friendly", ship="Akira")
+    _add_to_player_group(panel, "Akira")          # the player + 1: a wing
     _go(hl, panel)
     mods = [sys.modules[m] for m in _AI_MODULES]
     origs = [_original_create_ai(m) for m in mods]
@@ -387,11 +413,46 @@ def test_player_group_is_ai_led_by_its_strongest_ship(world):
 def test_player_only_group_gets_no_wing(world):
     hl, _c, panel, QB = world
     from engine.wings import roster
-    _enemies(panel, "Warbird")
+    _enemies(panel, "Warbird", "Galor")
     _go(hl, panel)
     assert _wing_for(panel, 0) is None
     assert roster.wing_of(_player().GetName()) is None
     assert _wing_for(panel, 1) is not None
+
+
+def test_single_ship_group_gets_no_wing(world):
+    """A group set up with one ship fights with its stock AI (Mark,
+    2026-11-13): a lone ship has nobody to lead, and a wing still changed
+    how it fought (the leash, popularity, desperation, withdraw)."""
+    hl, _c, panel, QB = world
+    from engine.wings import roster
+    lone_e = _enemies(panel, "Warbird")
+    pair_e = _group(panel, "enemy", "Galor", "Galor")
+    escort_e = _add_to_player_group(panel, "Akira")
+    # Names carry setup-wide ordinals: read them once every ship is in.
+    (lone,), pair = _name_list(lone_e), _name_list(pair_e)
+    escorts = _name_list(escort_e)
+    _go(hl, panel)
+    ships = _ships(QB)
+    assert _wing_for(panel, 1) is None
+    assert roster.wing_of(lone) is None and not _is_wing_tree(ships[lone])
+    assert _wing_for(panel, 2) is not None
+    assert all(_is_wing_tree(ships[n]) for n in pair)
+    # The player and one escort are two ships: the escort keeps its wing.
+    pw = _wing_for(panel, 0)
+    assert pw is not None and set(pw.members) == set(escorts)
+
+
+def test_single_ship_late_group_gets_no_wing(world):
+    hl, _c, panel, QB = world
+    from engine.wings import roster
+    _name_list(_group(panel, "enemy", "Galor", "Galor"))
+    (late,) = _name_list(_group(panel, "enemy", "Galor", warp_in=1))
+    _go(hl, panel)
+    assert _wing_for(panel, 3) is None
+    _arrive_late()
+    ship = _ships(QB)[late]
+    assert roster.wing_of(late) is None and not _is_wing_tree(ship)
 
 
 def test_player_focus_is_the_friendly_wings_primary(world):
@@ -415,7 +476,7 @@ def test_player_group_wing_escorts_the_player(world, monkeypatch):
     from engine.wings import brain, decisions
     _add_to_player_group(panel, "Akira", "Akira")
     _group(panel, "friendly", "Akira", "Akira")
-    _enemies(panel, "Warbird")
+    _enemies(panel, "Warbird", "Galor")
     _go(hl, panel)
     seen = {}
     real = decisions.pick
@@ -490,8 +551,8 @@ def test_protected_neutral_is_protectee_of_friendly_wings(world):
     enemy wing does not."""
     hl, _c, panel, QB = world
     _add_to_player_group(panel, "Akira")
-    _enemies(panel, "Warbird")
-    _group(panel, "friendly", "Akira")
+    _enemies(panel, "Warbird", "Galor")
+    _group(panel, "friendly", "Akira", "Akira")
     (transport_eid,) = _group(panel, "neutral", "Transport")
     _cond(panel, "defeat", "ships", [transport_eid])
     transport = _names()[transport_eid][0]
@@ -504,7 +565,7 @@ def test_protected_neutral_is_protectee_of_friendly_wings(world):
 
 def test_hunt_target_is_protectee_of_its_enemy_wing(world):
     hl, _c, panel, QB = world
-    keldon, galor, akira = _hunt(panel)
+    keldon, galor, akira, _extra = _hunt_pair(panel)
     _go(hl, panel)
     ew, fw = _wing_for(panel, 1), _wing_for(panel, 2)
     assert list(ew.protect_names()) == [galor]
