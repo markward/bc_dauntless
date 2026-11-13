@@ -86,6 +86,9 @@ class Wing:
     # (primary, slot body dirs, {holder: slot index}) of the last attack
     # step: the incumbents attack.assign_slots keeps (final review I2).
     attack_prev: tuple | None = None
+    # {member: secondary} of the last attack step: the members ordered onto
+    # the secondaries (attack.assign_secondaries keeps these incumbents).
+    secondaries_prev: dict = field(default_factory=dict)
     # Phase C reserve (spec §6): the member held back, when it was picked,
     # whether the wing has already committed it (never re-picked), the live
     # non-player count last tick (a drop is a loss) and the last enemy

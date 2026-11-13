@@ -426,7 +426,10 @@ def tick_wing(wing) -> None:
     busy = ({wing.commander} | guards | fallers | withdrawers | holders
             | {n for n, m in wing.members.items()
                if m.is_player or m.reserve})
-    slotted = _apply_attack(wing, members, enemies, choice, busy, ship_of)
+    seconds = _assign_secondaries(wing, members, enemies, prios, busy,
+                                  ship_of)
+    slotted = _apply_attack(wing, members, enemies, choice,
+                            busy | set(seconds), ship_of, seconds)
 
     player = next((n for n, m in wing.members.items() if m.is_player), None)
     # A commanding player with nothing to fight: the escorts form up on it.
@@ -892,15 +895,57 @@ def _slot_points(wing, members, choice, busy, ship_of):
     return cands, slots
 
 
-def _apply_attack(wing, members, enemies, choice, busy, ship_of):
+def _assign_secondaries(wing, members, enemies, prios, busy, ship_of):
+    """{member: (secondary, slot body dir)} (Mark 2026-11-13): floor(
+    secondary_share x the wing's live non-player members) of the members
+    not in `busy`, the ones closest to a secondary, each ordered onto the
+    secondary nearest it. Made before the primary's slots, so disable's
+    all-hands assault cannot take them. The secondaries are the group's
+    names at >= 1.5 other than its primary, live and uncloaked; none while
+    withdrawing or holding (the group is empty). Directions: envelop's,
+    spread over each secondary's holders by name."""
+    prev, wing.secondaries_prev = wing.secondaries_prev, {}
+    primary = _primary_of(prios)
+    views = {e.name: e for e in enemies}
+    secs = []
+    for name in sorted(prios):
+        if name == primary or prios[name] < 1.5 or name not in views:
+            continue
+        ship = ship_of(name)
+        if _alive(ship) and not _cloaked(ship):
+            secs.append(views[name])
+    live = sum(1 for n in members if not wing.members[n].is_player)
+    k = attack.secondary_count(live, dials.get("secondary_share"))
+    cands = [v for n, v in members.items()
+             if n not in busy and not wing.members[n].is_player
+             and wing.members[n].fire_script is not None]
+    got = attack.assign_secondaries(cands, secs, k, prev)
+    if got != prev:
+        log("%s secondaries %s" % (
+            wing.wing_id,
+            " ".join("%s>%s" % kv for kv in sorted(got.items())) or "none"))
+    wing.secondaries_prev = dict(got)
+    out = {}
+    for sec in sorted(set(got.values())):
+        holders = sorted(n for n, s in got.items() if s == sec)
+        for name, d in zip(holders, attack.envelop_dirs(len(holders))):
+            out[name] = (sec, d)
+    return out
+
+
+def _apply_attack(wing, members, enemies, choice, busy, ship_of,
+                  seconds=None):
     """Attack slots (spec §3): the choice's slot directions round its
     primary go to the members not in `busy` (commander, players, guards,
     fallers, reserve, withdrawers), nearest first. Each holder's wing
     FireScript and ship target follow the primary (changes only) and its
     aim mode follows choice.weapons_first; its attack branch is pushed on.
+    `seconds` ({member: (secondary, body dir)}, _assign_secondaries) hold
+    slots on their secondary the same way, never weapons-first.
     Everyone else has no slot and the branch off. Returns the holders.
     `enemies` is unused (kept for the plan's interface): the primary is
     resolved live through `ship_of`, the home-set lookup."""
+    seconds = seconds or {}
     holders = {}
     prev_assign = wing.attack_prev
     wing.attack_prev = None
@@ -920,32 +965,37 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of):
     for name, m in wing.members.items():
         if m.is_player:
             continue
-        if name not in holders:
+        if name in holders:
+            target, body_dir = primary, holders[name]
+            weapons_first = choice.weapons_first
+        elif name in seconds:
+            (target, body_dir), weapons_first = seconds[name], False
+        else:
             m.slot = None
             m.slot_hold = False
             m.attack_target = None
             _push(m, "attack", False)
             continue
-        slot = (primary, holders[name],
+        slot = (target, body_dir,
                 attack.holder_standoff(m.beam_range_gu, lo, hi))
         if slot != m.slot:
             m.slot_hold = False           # WingMoveTo re-enters on arrival
         m.slot = slot
         fire = m.fire_script
-        if m.attack_target != primary:
+        if m.attack_target != target:
             if fire is not None:
-                fire.SetTarget(primary)
+                fire.SetTarget(target)
             ship = ship_of(name)
             if ship is not None:
-                ship.SetTarget(primary)
-            m.attack_target = primary
-        if m.weapons_first != choice.weapons_first:
+                ship.SetTarget(target)
+            m.attack_target = target
+        if m.weapons_first != weapons_first:
             if fire is not None:
-                if choice.weapons_first:
+                if weapons_first:
                     fire.RestoreSubsystemTargets()
                 else:
                     fire.IgnoreSubsystemTargets()
-            m.weapons_first = choice.weapons_first
+            m.weapons_first = weapons_first
         _push(m, "attack", True)
         _push(m, "rejoin", False)
     sig = ((primary, tuple(sorted(holders)), bool(choice.weapons_first))
@@ -958,7 +1008,7 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of):
                    int(choice.weapons_first)))
         else:
             log("%s attack ends" % wing.wing_id)
-    return set(holders)
+    return set(holders) | set(seconds)
 
 
 def _end_withdraw(wing, now) -> None:
@@ -998,6 +1048,7 @@ def _stand_down(wing, why) -> None:
         wing.attack_sig = None
         log("%s attack ends" % wing.wing_id)
     wing.attack_prev = None
+    wing.secondaries_prev = {}
     for m in wing.members.values():
         m.move_point = None
         m.guard = False

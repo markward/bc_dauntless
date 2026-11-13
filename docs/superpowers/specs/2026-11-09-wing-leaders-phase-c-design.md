@@ -226,6 +226,16 @@ flapping.
   wing kills it. It also ends after `disable_max_s` (dial, default
   **300 s**) on one target. A disable that ends with the target still alive
   marks it done: disable never re-enters against it.
+- **Amendment 2026-11-13 (Mark): secondary holders** (branch
+  `fix/wing-opening-pick`, not yet live-checked). Before any primary slot
+  is handed out (disable's all-hands included), floor(`secondary_share` x
+  the wing's live non-player members) of the free members, the ones closest
+  to a secondary (the group's 1.5 names), are ordered onto the secondary
+  nearest each: an attack slot on it, `SetTarget`, never weapons-first, so
+  their SelectTarget never votes. Rounded **down** (Mark): the default 0.1
+  forces nobody in a wing under ten; the dial is on `/ L O` "wings".
+  Incumbents keep their secondary while it is listed. For every decision
+  with secondaries, not only disable (`brain._assign_secondaries`).
 - **(call)** Engine-disabling a fleeing ship is not in this phase. It conflicts
   with Phase A's don't-chase, which drops runners anyway. This is noted for
   later.

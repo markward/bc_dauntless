@@ -102,3 +102,40 @@ def assign_slots(candidates, points, prev=None):
         out[name] = j
         used.add(j)
     return out
+
+
+def secondary_count(n_members, share):
+    """How many members are ordered onto the secondaries: n x share,
+    rounded DOWN (Mark 2026-11-13), so the default 10% forces nobody in a
+    wing under ten. The epsilon keeps 10 x 0.3 at 3 (binary floats)."""
+    return max(0, int(math.floor(n_members * share + 1e-9)))
+
+
+def assign_secondaries(candidates, secondaries, k, prev=None):
+    """name -> secondary name for up to k candidates: the ones closest to
+    any secondary, each taking the secondary nearest it (ties by name).
+    `prev` (last tick's) keeps each holder that is still a candidate on its
+    secondary while that is still listed, nearest first, so the share does
+    not reshuffle every brain tick; the rest of the k are filled fresh."""
+    secs = {s.name: s for s in secondaries}
+    if k <= 0 or not secs or not candidates:
+        return {}
+    views = {c.name: c for c in candidates}
+
+    def nearest(c):
+        return min(secs.values(), key=lambda s: (dist(c.pos, s.pos), s.name))
+
+    out = {}
+    keep = sorted((dist(views[n].pos, secs[s].pos), n, s)
+                  for n, s in (prev or {}).items()
+                  if n in views and s in secs)
+    for _d, n, s in keep[:k]:
+        out[n] = s
+    fresh = []
+    for c in candidates:
+        if c.name not in out:
+            s = nearest(c)
+            fresh.append((dist(c.pos, s.pos), c.name, s.name))
+    for _d, n, s in sorted(fresh)[:k - len(out)]:
+        out[n] = s
+    return out
