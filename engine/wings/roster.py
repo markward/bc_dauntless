@@ -53,6 +53,9 @@ class Wing:
     away: bool = False           # command alive but outside the home set
     decision: str | None = None
     primary: str | None = None
+    # Latched at first contact (plans.in_contact): ends the opening, when
+    # target picks read engage_gu (decisions._reach_gu).
+    contacted: bool = False
     km_priorities: Callable[[], dict] = field(default=lambda: {})
     phase_s: float = 0.0
     accum_s: float = 0.0
@@ -83,6 +86,9 @@ class Wing:
     # (primary, slot body dirs, {holder: slot index}) of the last attack
     # step: the incumbents attack.assign_slots keeps (final review I2).
     attack_prev: tuple | None = None
+    # {member: secondary} of the last attack step: the members ordered onto
+    # the secondaries (attack.assign_secondaries keeps these incumbents).
+    secondaries_prev: dict = field(default_factory=dict)
     # Phase C reserve (spec §6): the member held back, when it was picked,
     # whether the wing has already committed it (never re-picked), the live
     # non-player count last tick (a drop is a loss) and the last enemy

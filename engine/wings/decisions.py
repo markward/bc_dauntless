@@ -66,6 +66,9 @@ class Context:
     # This wing is the player's escort (service.set_player_wing): it stays
     # with the player, so it never reinforces, feints, screens or flanks.
     escorts_player: bool = False
+    # No first contact yet (the wing's contacted latch): target picks read
+    # engage_gu instead of leash_gu (_reach_gu).
+    opening: bool = False
 
 
 @dataclass
@@ -112,12 +115,35 @@ def _memo(ctx, kind, inputs, compute):
     return value
 
 
-def _in_reach(ctx):
-    leash = dials.get("leash_gu")
+def _reach_gu(ctx) -> float:
+    """The radius every target pick reads: leash_gu, or engage_gu before
+    the wing's first contact (ctx.opening; the brain then marks the choice
+    far, so the group keeps the pick past the leash).
+
+    Quick Battle mirrors its rows around the player, and "Standard" range
+    is 35 km = 200 GU = leash_gu: each enemy commander had exactly one ship
+    inside its leash, the one straight opposite (the player, for a slot-0
+    commander). "Weakest in reach" was then that ship, alone in the target
+    group, and the whole wing piled onto it from the first tick."""
+    return dials.get("engage_gu" if ctx.opening else "leash_gu")
+
+
+def _within(ctx, kind, radius):
     return list(_memo(
-        ctx, "reach", (ctx.enemies, ctx.anchor, leash),
+        ctx, kind, (ctx.enemies, ctx.anchor, radius),
         lambda: [e for e in ctx.enemies
-                 if assess.dist(e.pos, ctx.anchor.pos) <= leash]))
+                 if assess.dist(e.pos, ctx.anchor.pos) <= radius]))
+
+
+def _in_reach(ctx):
+    return _within(ctx, "reach", _reach_gu(ctx))
+
+
+def _in_leash(ctx):
+    """Enemies within leash_gu, opening or not: disable's pool. A disable
+    is an all-out assault on a much stronger ship; started from engage_gu
+    it charged a ship the wing should lure to an ally (Phase D feint)."""
+    return _within(ctx, "leash", dials.get("leash_gu"))
 
 
 def _near(ctx):
@@ -297,7 +323,7 @@ def swarm_choice(ctx: Context) -> Choice:
         if cmdr.score(ctx) > weakest.score(ctx):
             return cmdr.choose(ctx)
         return weakest.choose(ctx)
-    inputs = (ctx.members, ctx.enemies, ctx.anchor, dials.get("leash_gu"),
+    inputs = (ctx.members, ctx.enemies, ctx.anchor, _reach_gu(ctx),
               dials.get("engage_gu"), dials.get("odds_ratio"))
     return copy.copy(_memo(ctx, "swarm", inputs, compute))
 
@@ -415,7 +441,7 @@ def _disable_target(ctx):
     disable_threat x our strongest member. The latch keys on
     ctx.disable_target alone: the brain keeps it only while a disable runs
     (and across a command-away, which clears the decision itself)."""
-    reach = [e for e in _in_reach(ctx) if e.name not in ctx.disable_done]
+    reach = [e for e in _in_leash(ctx) if e.name not in ctx.disable_done]
     if ctx.disable_target is not None:
         big = next((e for e in reach if e.name == ctx.disable_target), None)
         return None if big is None or big.weapons_down else big

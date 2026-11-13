@@ -403,6 +403,57 @@ def test_disable_aims_at_weapons_and_survives_sync(monkeypatch, capsys):
     _no_fire_errors(capsys)
 
 
+def _secondary_scene():
+    """The disable scene plus two Birds of Prey. The Warbird e1 is the
+    disable target; swarm's order is e2 (weakest by name), e3, so disable's
+    lone secondary is e3, put 30 GU off m4 (m4 sits at -60 on x)."""
+    wing, ships = _disable_scene()
+    pSet = ships["m1"].GetContainingSet()
+    for name, xyz in (("e2", (150.0, 40.0, 0.0)), ("e3", (-60.0, 30.0, 0.0))):
+        ships[name] = _ship(pSet, "BirdOfPrey", name, xyz)
+        wing.enemy_group.AddName(name)
+    return wing, ships
+
+
+def test_secondary_share_orders_the_closest_onto_its_secondary(now):
+    wing, ships = _secondary_scene()
+    dials._dials["secondary_share"] = 0.25    # floor(4 x 0.25) = 1
+    brain.tick_wing(wing)
+    assert wing.decision == "disable" and wing.primary == "e1"
+    m4 = roster.member("m4")
+    # Picked before disable's all-hands slots: m4 holds e3, not e1.
+    assert m4.slot is not None and m4.slot[0] == "e3"
+    assert m4.attack_target == "e3" and not m4.weapons_first
+    assert ships["m4"].GetTarget().GetName() == "e3"
+    assert _status("m4", "attack") == 1
+    for n in ("m2", "m3"):
+        m = roster.member(n)
+        assert m.slot[0] == "e1" and m.weapons_first
+    assert roster.member("m1").slot is None          # the commander never
+    assert wing.secondaries_prev == {"m4": "e3"}
+
+
+def test_secondary_share_default_forces_nobody_in_a_small_wing(now):
+    """10%, rounded down: a wing under ten forces nobody (Mark's call)."""
+    wing, _ships = _secondary_scene()
+    brain.tick_wing(wing)
+    assert wing.decision == "disable"
+    assert {roster.member(n).slot[0] for n in ("m2", "m3", "m4")} == {"e1"}
+    assert wing.secondaries_prev == {}
+
+
+def test_secondary_holder_released_when_the_share_drops(now):
+    wing, _ships = _secondary_scene()
+    dials._dials["secondary_share"] = 0.25
+    brain.tick_wing(wing)
+    assert roster.member("m4").slot[0] == "e3"
+    dials._dials["secondary_share"] = 0.0
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert roster.member("m4").slot[0] == "e1"      # back in the disable
+    assert wing.secondaries_prev == {}
+
+
 def test_disable_ends_when_weapon_pools_are_gone(now):
     """Weapons-first aim lands on each weapon SYSTEM's own condition (the
     SDK's ChooseTargetSubsystem picks the non-targetable system itself),

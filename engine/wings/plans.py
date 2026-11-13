@@ -61,6 +61,15 @@ def target_priorities(enemies, anchor, choice, km, player_target,
     return out
 
 
+def in_contact(member_views, enemies) -> bool:
+    """Any member within contact_gu of any enemy: the wing's first contact,
+    which ends its opening (decisions._reach_gu)."""
+    reach = dials.get("contact_gu")
+    enemies = list(enemies)
+    return any(assess.dist(m.pos, e.pos) <= reach
+               for m in member_views for e in enemies)
+
+
 def leaderless_priorities(enemies, km):
     return {e.name: km.get(e.name, 0.0) for e in enemies}
 

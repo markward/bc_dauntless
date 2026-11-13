@@ -252,6 +252,22 @@ strength/weakness once per wing per second instead of every ship
 re-deriving it. Whether this lowers `gl.ai` at 128 ships is **measured, not
 assumed** (§11).
 
+**Amendment 2026-11-13: the opening** (`decisions._reach_gu`, branch
+`fix/wing-opening-pick`, not yet live-checked). Quick Battle mirrors its
+rows around the player, and "Standard" range is 35 km = 200 GU =
+`leash_gu`: each enemy commander had exactly one ship inside its reach set,
+the one straight opposite (the player, for a slot-0 commander), so the whole
+wing piled onto it from the first tick with nothing to overflow to. Until a
+wing's first contact (any member within `contact_gu`, default 100 GU, of an
+enemy; latched per wing) the reach set every target pick reads is
+`engage_gu`, not `leash_gu`, and the brain marks the choice far, so the
+group keeps the pick and its secondaries past the leash. Disable keeps
+reading `leash_gu` (`_in_leash`): started from `engage_gu` it charged a ship
+the wing should lure to an ally (Phase D feint). "Don't chase" is
+unchanged: past the leash the group holds only the chosen names. Stock
+SelectTarget ignores sensors (`bIgnoreSensors = 1`), so no detection delay
+is involved, in BC or here.
+
 ## 10. Leaderless and desperation
 
 When a wing becomes leaderless:
