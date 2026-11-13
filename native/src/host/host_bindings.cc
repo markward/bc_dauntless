@@ -5000,14 +5000,14 @@ PyMethodDef g_push_scalar_def = {
 // _PyObject_GetDictPtr (k2_dict_of) then BUILDS the dict: a GC-tracked
 // allocation, which the scans must never make (see above). The managed
 // dict slot sits three pointers before the object: 3.11 and 3.13 the dict
-// pointer (NULL until built), 3.12 the dict or the values pointer tagged
+// pointer (NULL until built), 3.12 and 3.14 the dict or the values pointer tagged
 // with bit 0. Any other version answers nullptr. In practice a registered
 // object's dict is built at registration (the mirror fields write
 // obj.__dict__), so the nullptr is a guard, not a cost.
 PyObject* k1_built_dict(PyObject* o) {
 #if PY_VERSION_HEX >= 0x030B0000
     if (PyType_HasFeature(Py_TYPE(o), Py_TPFLAGS_MANAGED_DICT)) {
-#if PY_VERSION_HEX < 0x030E0000
+#if PY_VERSION_HEX < 0x030F0000 && !defined(Py_GIL_DISABLED)
         const std::uintptr_t slot = reinterpret_cast<std::uintptr_t*>(o)[-3];
         if (slot == 0 || (slot & 1u) != 0) return nullptr;
         PyObject* d = reinterpret_cast<PyObject*>(slot);
@@ -5053,9 +5053,9 @@ const K0ScanNames& k0_scan_names() {
 #define K0_INLINE inline
 #endif
 
-// k1_built_dict, the managed-dict case read in place (3.11-3.13).
+// k1_built_dict, the managed-dict case read in place (3.11-3.14).
 K0_INLINE PyObject* k0_dict_of(PyObject* o) {
-#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030E0000
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030F0000 && !defined(Py_GIL_DISABLED)
     if (o->ob_type->tp_flags & Py_TPFLAGS_MANAGED_DICT) {
         const std::uintptr_t sl = reinterpret_cast<std::uintptr_t*>(o)[-3];
         if (sl == 0 || (sl & 1u) != 0) return nullptr;
