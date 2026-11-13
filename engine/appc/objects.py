@@ -1801,7 +1801,12 @@ def release_ids(obj) -> None:
     if isinstance(obj, Torpedo):
         return
     from engine.core import ids
-    for oid, o in list(ids._registry.items()):
+    # dict.copy(), not list(items()): that allocated a tuple per entry, any
+    # of which could start a collection whose finalizers (SDK conditions
+    # tear down in __del__) register or unregister ids mid-copy, and the
+    # snapshot raised "dictionary changed size during iteration". The copy
+    # runs in C with no per-entry allocation, so no Python code runs in it.
+    for oid, o in ids._registry.copy().items():
         d = getattr(o, "__dict__", None)
         if d is not None and (d.get("_parent_ship") is obj
                               or d.get("_anchor_obj") is obj):
