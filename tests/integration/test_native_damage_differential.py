@@ -116,6 +116,11 @@ def _build(name, pos, yaw=0.0, scale=1.0, hull_max=1000.0):
     predicates), a torpedo system with a tube, six shield faces and a
     repair bay, at `pos` turned `yaw` degrees."""
     ship = ShipClass_Create(name)
+    # Every real ship gets a ShipProperty from its hardpoint script; the
+    # death cascade's sound (the SDK's GetDeathExplosionSound) reads it.
+    prop = App.ShipProperty_Create(name)
+    prop.SetDeathExplosionSound("g_lsDeathExplosions")
+    ship.GetPropertySet().AddToSet("Scene Root", prop)
     hull = HullSubsystem("Hull")
     hull.SetMaxCondition(hull_max)
     hull.SetCritical(1)
@@ -582,9 +587,14 @@ STEPS = [
 
 
 def _arm(monkeypatch, env):
+    from engine import dev_mode
     with monkeypatch.context() as mp:
         w = _World(mp, env)
+        dev_mode.reset_swallowed()
         w.run(STEPS)
+        # The arm runs in developer mode, so a swallowed exception is
+        # recorded here rather than vanishing.
+        w.swallowed = dev_mode.swallowed_counts()
         if w.native:
             nc.audit_mirror()
             w.audit = list(nc.audit_failures())
@@ -620,3 +630,9 @@ def test_native_damage_matches_python_for_every_non_kernel_caller(
     assert counts.get("damage_systems", 0) > 0, counts
     assert counts.get("fallbacks", 0) == 0, counts
     assert nat.audit == []
+    # The deaths' blasts ran to the end. A ship with no ShipProperty makes
+    # the SDK's GetDeathExplosionSound raise, which the cascade swallows.
+    for arm in (ref, nat):
+        blasts = {k: n for k, n in arm.swallowed.items()
+                  if k[0] == "death cascade blast"}
+        assert not blasts, blasts
