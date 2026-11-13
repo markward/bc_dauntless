@@ -9,7 +9,8 @@ commanders" switch is Off (`plan.wings`), or BC's own GenerateShips ran):
   and whose setup holds at least two ships (`group_sizes`: the player counts
   in its own group, late and station ships count). A group of one ship gets
   no wing and fights with its stock AI (Mark, 2026-11-13): a lone ship has
-  nobody to lead, and a wing still changed how it fought.
+  nobody to lead, and a wing still changed how it fought. Live-verified by
+  Mark 2026-11-13.
   Members are the MOBILE ships (an impulse engine with an authored max
   speed > 0) of the orders whose AI module (`spawn._details`, the same
   lookup that fills g_kShips) is QuickBattleAI or QuickBattleFriendlyAI.
