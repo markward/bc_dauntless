@@ -12,6 +12,11 @@ DEFAULTS: dict = {
     # overshoot warped).
     "rejoin_warp_gu": 600.0,
     "engage_gu": 350.0,
+    # First contact: any member this close to an enemy ends the wing's
+    # opening (target picks from engage_gu, decisions._reach_gu) for good.
+    # Under Quick Battle's "Close" spawn (20 km, ~114 GU), so every spawn
+    # range opens.
+    "contact_gu": 100.0,
     "wing_popularity": -0.3,
     "stickiness": 0.25,
     "odds_ratio": 0.8,
@@ -70,7 +75,8 @@ DEFAULTS: dict = {
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
          "rejoin_warp_gu": 50.0,
-         "engage_gu": 25.0, "wing_popularity": 0.1, "stickiness": 0.05,
+         "engage_gu": 25.0, "contact_gu": 10.0, "wing_popularity": 0.1,
+         "stickiness": 0.05,
          "odds_ratio": 0.05, "desperate_hull": 0.05, "ram_chance": 0.05,
          "brain_period_s": 0.25, "heavy_fire_window_s": 0.5,
          "heavy_fire_frac": 0.05, "heavy_fire_attackers": 1, "guard_count": 1,
@@ -97,7 +103,8 @@ _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
          "screen_max_s": 5.0, "screen_cooldown_s": 5.0}
 _MIN = {"leash_gu": 25.0, "leash_slack_gu": 0.0, "regroup_gather_gu": 25.0,
         "rejoin_warp_gu": 100.0,
-        "engage_gu": 25.0, "wing_popularity": -2.0, "stickiness": 0.0,
+        "engage_gu": 25.0, "contact_gu": 0.0, "wing_popularity": -2.0,
+        "stickiness": 0.0,
         "odds_ratio": 0.1, "desperate_hull": 0.0, "ram_chance": 0.0,
         "brain_period_s": 0.25, "heavy_fire_window_s": 0.5,
         "heavy_fire_frac": 0.0, "heavy_fire_attackers": 1, "guard_count": 0,

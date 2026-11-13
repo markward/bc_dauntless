@@ -350,6 +350,9 @@ def tick_wing(wing) -> None:
         _end_withdraw(wing, now)
     _disable_cap(wing, now)
     _side_clocks(wing, near, now)
+    if not wing.contacted and plans.in_contact(members.values(), enemies):
+        wing.contacted = True
+        log("%s contact" % wing.wing_id)
     from engine.wings import service      # service imports brain
     ctx = decisions.Context(
         members=list(members.values()), anchor=anchor, enemies=enemies,
@@ -379,7 +382,8 @@ def tick_wing(wing) -> None:
         flank_done=frozenset(wing.flank_done),
         screen_ally=wing.screen_ally,
         screen_done=frozenset(wing.screen_done),
-        escorts_player=wing.wing_id == service.player_wing_id())
+        escorts_player=wing.wing_id == service.player_wing_id(),
+        opening=not wing.contacted)
     decisions.seed_near(ctx, near)       # one engage-range filter a tick
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
@@ -392,6 +396,9 @@ def tick_wing(wing) -> None:
         wing.decision = decision.name
         wing.decision_since = now
     choice = decision.choose(ctx)
+    if ctx.opening and not choice.far:
+        # Picked from engage_gu (decisions._reach_gu): keep it past leash.
+        choice = dataclasses.replace(choice, far=True)
     wing.protect_prev = choice.protectee
     _track_disable(wing, decision.name, choice, now)
     _track_side(wing, decision.name, choice, now, ctx)

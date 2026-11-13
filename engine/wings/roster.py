@@ -53,6 +53,9 @@ class Wing:
     away: bool = False           # command alive but outside the home set
     decision: str | None = None
     primary: str | None = None
+    # Latched at first contact (plans.in_contact): ends the opening, when
+    # target picks read engage_gu (decisions._reach_gu).
+    contacted: bool = False
     km_priorities: Callable[[], dict] = field(default=lambda: {})
     phase_s: float = 0.0
     accum_s: float = 0.0

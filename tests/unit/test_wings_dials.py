@@ -3,7 +3,8 @@ from engine.wings import dials
 
 SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "rejoin_warp_gu": 600.0,
-        "engage_gu": 350.0, "wing_popularity": -0.3, "stickiness": 0.25,
+        "engage_gu": 350.0, "contact_gu": 100.0, "wing_popularity": -0.3,
+        "stickiness": 0.25,
         "odds_ratio": 0.8, "desperate_hull": 0.4, "ram_chance": 0.3,
         "brain_period_s": 1.0, "heavy_fire_window_s": 5.0,
         "heavy_fire_frac": 0.15, "heavy_fire_attackers": 3,

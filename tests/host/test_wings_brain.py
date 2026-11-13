@@ -158,6 +158,31 @@ def test_nothing_in_reach_holds_only_the_nearest():
     assert wing.primary == "e1"
 
 
+def test_opening_picks_from_engage_range_until_contact_then_latches():
+    """Quick Battle's Standard spawn puts one enemy at exactly leash_gu from
+    the commander and the rest just past it. Before contact the wing picks
+    the weakest within engage_gu (with secondaries), not the lone ship that
+    happens to sit inside the leash; contact ends the opening for good."""
+    wing, ships = _scene([(0.0, 200.0, 0.0), (7.0, 200.1, 0.0),
+                          (-7.0, 200.1, 0.0)])
+    ships["e2"].GetHull().SetConditionPercentage(0.5)    # e2 is the weakest
+    brain.tick_wing(wing)
+    assert not wing.contacted
+    assert wing.primary == "e2"
+    assert _group(wing) == {"e2": 3.0, "e1": 1.5, "e3": 1.5}
+
+    ships["e1"].SetTranslateXYZ(0.0, 60.0, 0.0)          # contact
+    brain.tick_wing(wing)
+    assert wing.contacted
+
+    ships["e1"].SetTranslateXYZ(0.0, 200.0, 0.0)         # back out again
+    brain.tick_wing(wing)
+    # Latched: the leash is the reach again, so e2 and e3 (just past it)
+    # leave the group and the lone ship inside it is the pick.
+    assert wing.contacted
+    assert _group(wing) == {"e1": 3.0}
+
+
 def test_km_priority_kept_for_reach_set():
     wing, _ships = _scene([(100.0, 0.0, 0.0), (120.0, 0.0, 0.0),
                            (140.0, 0.0, 0.0)])
