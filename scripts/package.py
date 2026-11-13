@@ -47,6 +47,10 @@ MACOS. On a Mac the same tree is staged as dist/BC Dauntless.app, with the
 install root in Contents/Resources; the "macOS" section below explains that
 layout. --zip writes BC-Dauntless-<version>-macos-arm64.zip.
 
+LINUX. dist/BC Dauntless/ again, flat like Windows: the binary, libpython
+and the CEF libraries at the root, the stdlib under python/; the "Linux"
+section below explains it. --zip writes BC-Dauntless-<version>-linux-x64.zip.
+
 BC's own content (the player's game folder) is never copied. It is the
 player's, it is found at runtime through engine/paths.py, and it is not ours
 to ship. The game reads Bridge Commander's stock scripts from that folder
@@ -78,7 +82,11 @@ PACKAGED_MARKER = "dauntless-packaged.json"
 
 def platform_tag(platform: str = sys.platform) -> str:
     """The OS-and-arch half of a published artefact's name."""
-    return "macos-arm64" if platform == "darwin" else "windows-x64"
+    if platform == "darwin":
+        return "macos-arm64"
+    if platform.startswith("linux"):
+        return "linux-x64"
+    return "windows-x64"
 
 
 # Published artefacts are named for the build, so a downloaded zip identifies
@@ -218,6 +226,8 @@ def app_binary(app: Path, platform: str = sys.platform) -> Path:
     """The executable a player (and the smoke checks) launch."""
     if platform == "darwin":
         return app / "Contents" / "MacOS" / APP_NAME
+    if platform.startswith("linux"):
+        return app / APP_NAME
     return app / f"{APP_NAME}.exe"
 
 
@@ -823,6 +833,149 @@ def make_macos_zip(app: Path) -> Path:
             zf.write(resources / name, name)
     return target
 
+# --- Linux ------------------------------------------------------------------
+#
+#     dist/BC Dauntless/
+#         BC Dauntless                    the game (also CEF's helper processes)
+#         libpython3.X.so.1.0             linked by the binary
+#         libcef.so, *.pak, locales/ ...  the CEF runtime
+#         _dauntless_host*.so             the extension module
+#         python/<platlibdir>/python3.X   the stdlib (PYTHONHOME is python/)
+#         engine/, *.py, tools/, native/assets, docs, licenses/, the marker
+#
+# Everything the binary links is found through its RUNPATH, which the build
+# sets to $ORIGIN, so the libraries stay flat beside it, as on Windows. The
+# extension's RUNPATH is $ORIGIN/.. (it sits in build/python/ in a checkout),
+# which misses here -- harmless, because the binary has already loaded
+# libcef.so by the time Python imports the extension, and the loader matches
+# a NEEDED entry against an already-loaded SONAME before searching.
+#
+# The stdlib lives under sys.platlibdir, not lib/: Fedora's Python is built
+# with platlibdir "lib64", and with PYTHONHOME set that is where it looks.
+#
+# NOT bundled: the system libraries CEF and the stdlib's extension modules
+# link (GTK's stack, NSS, OpenSSL, libffi, ...). The build targets a
+# Fedora-based desktop (Bazzite), which carries them; the libraries come from
+# the system exactly as they do for the distro's own Chromium.
+#
+# Debug info is stripped from the copies: CEF's libcef.so alone is ~1.5 GB
+# with it and ~0.25 GB without. The build/ originals keep theirs.
+
+_LINUX_STDLIB_SKIP = {"site-packages", f"config-{sys.version_info.major}."
+                      f"{sys.version_info.minor}-x86_64-linux-gnu"}
+_LINUX_RUNTIME_SUFFIXES = {".so", ".pak", ".bin", ".dat", ".json"}
+
+
+def ldd_libpython(ldd: str) -> Path:
+    """The libpython a binary links, from `ldd` output."""
+    for line in ldd.splitlines():
+        parts = line.split()
+        if parts and parts[0].startswith("libpython"):
+            if len(parts) < 3 or parts[1] != "=>" or parts[2] == "not":
+                raise SystemExit(f"[package] {parts[0]} is not found: {line.strip()}")
+            return Path(parts[2])
+    raise SystemExit("[package] the binary links no libpython; nothing to bundle")
+
+
+def is_linux_runtime_file(name: str) -> bool:
+    """A file the build copied beside dauntless for CEF to load."""
+    suffix = Path(name).suffix
+    return suffix in _LINUX_RUNTIME_SUFFIXES or ".so." in name
+
+
+def linux_stdlib_ignore(folder: str, names: list) -> set:
+    """shutil.copytree's ignore for the stdlib: the skip lists, plus bytecode.
+
+    Except SOURCELESS bytecode. Fedora ships the encodings/ codecs (and a
+    pydoc_data module) as a bare foo.pyc with no foo.py, so dropping every
+    .pyc dropped the codecs themselves -- and the first BC script decoded
+    as cp1252 died with "unknown encoding: cp1252".
+    """
+    skip = _STDLIB_SKIP | _LINUX_STDLIB_SKIP
+    present = set(names)
+    ignored = set()
+    for name in names:
+        if name in skip or name.endswith(".pyo"):
+            ignored.add(name)
+        elif name.endswith(".pyc") and name[:-1] in present:
+            ignored.add(name)
+    return ignored
+
+
+def _strip(path: Path) -> None:
+    _run("strip", "--strip-debug", str(path))
+
+
+def stage_linux_python(app: Path, exe_src: Path) -> None:
+    """Bundle libpython and the trimmed stdlib beside the binary.
+
+    The stdlib must come from the interpreter the binary links, or the
+    bundled libpython would run another version's Lib/.
+    """
+    linked = ldd_libpython(_run("ldd", str(exe_src)))
+    ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    if not linked.name.startswith(f"lib{ver}."):
+        raise SystemExit(
+            f"[package] build/dauntless links {linked.name}, but this script "
+            f"runs {ver}; run it with the interpreter the build linked")
+    shutil.copy2(linked.resolve(), app / linked.name)
+
+    home = python_home()
+    lib_src = home / sys.platlibdir / ver
+    lib_dest = app / "python" / sys.platlibdir / ver
+    if not (lib_src / "os.py").is_file():
+        raise SystemExit(f"[package] no stdlib at {lib_src}")
+    _copytree(lib_src, lib_dest, ignore=linux_stdlib_ignore)
+    for item in (lib_dest / "lib-dynload").glob("*"):
+        if item.name.lower().startswith(_DLL_SKIP_PREFIXES):
+            item.unlink()
+
+
+def stage_linux(dest: Path) -> Path:
+    app = dest / APP_NAME
+    if app.exists():
+        _say(f"removing previous {app.relative_to(PROJECT_ROOT)}")
+        shutil.rmtree(app)
+    app.mkdir(parents=True)
+
+    exe_src = BUILD / "dauntless"
+    if not exe_src.is_file():
+        raise SystemExit("[package] build/dauntless is missing -- build first:\n"
+                         "  cmake --build build -j")
+
+    # 1. The binary and the interpreter it links.
+    exe = app_binary(app)
+    shutil.copy2(exe_src, exe)
+    _strip(exe)
+    stage_linux_python(app, exe_src)
+    _say(f"binary + python -> {exe.name}, libpython (stdlib from {python_home()})")
+
+    # 2. The CEF runtime and the extension module, from beside build/dauntless
+    #    where the build already arranged them the way CEF loads them.
+    runtime = 0
+    for item in BUILD.iterdir():
+        if item.is_file() and is_linux_runtime_file(item.name) \
+                and item.name != "compile_commands.json":
+            shutil.copy2(item, app / item.name)
+            runtime += 1
+    for sub in ("locales",):
+        src = BUILD / sub
+        if src.is_dir():
+            _copytree(src, app / sub)
+    ext = sorted((BUILD / "python").glob("_dauntless_host*.so"))
+    if not ext:
+        raise SystemExit("[package] no _dauntless_host*.so in build/python")
+    shutil.copy2(ext[0], app / ext[0].name)
+    for lib in [app / "libcef.so", app / ext[0].name]:
+        _strip(lib)
+    _say(f"runtime -> {runtime} libraries + {ext[0].name} (stripped)")
+
+    # 3. The install root: the game's Python, docs, licences, marker.
+    stage_game_python(app)
+    stage_docs(app)
+    write_marker(app)
+    return app
+
 
 def tree_size_mb(root: Path) -> int:
     total = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
@@ -925,9 +1078,10 @@ def main() -> int:
                     help="also write the publishable zip into dist/")
     args = ap.parse_args()
 
-    if sys.platform not in ("win32", "darwin"):
-        raise SystemExit("[package] this script stages a Windows or macOS "
-                         "build only")
+    linux = sys.platform.startswith("linux")
+    if sys.platform not in ("win32", "darwin") and not linux:
+        raise SystemExit("[package] this script stages a Windows, macOS or "
+                         "Linux build only")
 
     # Like a dirty tree: fine to stage for testing, never fine to publish.
     unfinished = unfinished_docs()
@@ -936,7 +1090,8 @@ def main() -> int:
                          f"still hold {DOC_PLACEHOLDER} placeholders")
 
     macos = sys.platform == "darwin"
-    app = stage_macos(DIST) if macos else stage(DIST)
+    app = (stage_macos(DIST) if macos
+           else stage_linux(DIST) if linux else stage(DIST))
     root = app / "Contents" / "Resources" if macos else app
     info = json.loads((root / PACKAGED_MARKER).read_text(encoding="utf-8"))
     _say(f"staged {app.relative_to(PROJECT_ROOT)} ({tree_size_mb(app)} MB)")

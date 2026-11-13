@@ -54,6 +54,35 @@ the one platform with no pinned CEF hash; a build there fetches CEF unverified a
 warns. Linux is pinned to the SHA1 that upstream publishes rather than a SHA256,
 because nobody has built CEF there yet to compute one from verified bytes.
 
+### Building on Linux
+
+Build against **Python 3.11**, as the Mac does, not the distribution's own
+Python. The native engine reads CPython internals directly (an object's
+instance dict, in `native/src/host/host_bindings.cc`), and that is only coded
+for the versions it was written against. On Fedora's Python 3.14 the game
+still boots, but phaser beams are not drawn and native AI/combat tests fail.
+
+Let uv supply 3.11, then point CMake at it. Without `Python3_ROOT_DIR`, CMake
+finds the system headers even when the venv is 3.11:
+
+```bash
+uv sync --python 3.11 --extra dev
+cmake -B build -S . -U "_Python3_*" \
+  -DPython3_ROOT_DIR="$(.venv/bin/python -c 'import sys; print(sys.base_prefix)')" \
+  -DPython3_EXECUTABLE=.venv/bin/python \
+  -DPYTHON_EXECUTABLE=.venv/bin/python
+cmake --build build -j
+```
+
+`--extra dev` brings pytest. The flags are only needed on the first configure;
+CMake caches them. On an immutable distribution such as Bazzite, build inside a
+Fedora distrobox; the result runs on the host.
+
+`uv run python scripts/package.py` then stages `dist/BC Dauntless/` and the
+`linux-x64` zip, bundling that Python 3.11 and CEF. GTK, NSS and the other
+desktop libraries come from the host, so the zip targets a current desktop
+distribution, and is so far tested only on Bazzite (Fedora 44).
+
 ## Running the renderer
 
 Build the renderer host from the project root, then launch the binary directly:
