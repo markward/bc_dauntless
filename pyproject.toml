@@ -3,7 +3,7 @@ name = "dauntless"
 # Must equal engine/version.py's VERSION; tests/unit/test_version_consistency.py
 # enforces it. engine/ is what a packaged build ships, so that module is the
 # source of truth and this is the copy.
-version = "0.3.1"
+version = "0.3.2"
 requires-python = ">=3.11"
 # pillow is the only third-party runtime import in the suite (PNG-encoder test +
 # backdrop-baking tool). Physics is in the C++ engine now, so pybullet is no
