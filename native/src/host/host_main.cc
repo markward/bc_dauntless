@@ -287,6 +287,21 @@ int main(int argc, char* argv[]) {
 
     Py_InitializeEx(/*initsigs=*/1);
 
+    // The interpreter has read PYTHONHOME/PYTHONPATH; nothing needs them after
+    // this. Left set, every child process inherits them, and a packaged one
+    // points any SYSTEM Python a child runs at our trimmed stdlib: on Linux
+    // CEF starts /usr/bin/gnome-browser-connector-host, which then died with
+    // ModuleNotFoundError. CEF's own helpers re-run this binary, which sets
+    // them again. os.environ.pop also unsets the C environment, so children
+    // spawned from C++ and from Python both see the clean one.
+    if (packaged) {
+        PyRun_SimpleString(
+            "import os\n"
+            "for _k in ('PYTHONHOME', 'PYTHONPATH', 'PYTHONSTARTUP'):\n"
+            "    os.environ.pop(_k, None)\n"
+            "del _k, os\n");
+    }
+
     // engine.paths reads sys.argv for --game-dir, and
     // Py_InitializeEx leaves sys.argv unset. Build the list directly rather
     // than calling PySys_SetArgvEx, which is deprecated since 3.11 -- and
