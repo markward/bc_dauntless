@@ -883,6 +883,25 @@ def is_linux_runtime_file(name: str) -> bool:
     return suffix in _LINUX_RUNTIME_SUFFIXES or ".so." in name
 
 
+def linux_stdlib_ignore(folder: str, names: list) -> set:
+    """shutil.copytree's ignore for the stdlib: the skip lists, plus bytecode.
+
+    Except SOURCELESS bytecode. Fedora ships the encodings/ codecs (and a
+    pydoc_data module) as a bare foo.pyc with no foo.py, so dropping every
+    .pyc dropped the codecs themselves -- and the first BC script decoded
+    as cp1252 died with "unknown encoding: cp1252".
+    """
+    skip = _STDLIB_SKIP | _LINUX_STDLIB_SKIP
+    present = set(names)
+    ignored = set()
+    for name in names:
+        if name in skip or name.endswith(".pyo"):
+            ignored.add(name)
+        elif name.endswith(".pyc") and name[:-1] in present:
+            ignored.add(name)
+    return ignored
+
+
 def _strip(path: Path) -> None:
     _run("strip", "--strip-debug", str(path))
 
@@ -906,8 +925,7 @@ def stage_linux_python(app: Path, exe_src: Path) -> None:
     lib_dest = app / "python" / sys.platlibdir / ver
     if not (lib_src / "os.py").is_file():
         raise SystemExit(f"[package] no stdlib at {lib_src}")
-    _copytree(lib_src, lib_dest, ignore=shutil.ignore_patterns(
-        *_STDLIB_SKIP, *_LINUX_STDLIB_SKIP, "*.pyc", "*.pyo"))
+    _copytree(lib_src, lib_dest, ignore=linux_stdlib_ignore)
     for item in (lib_dest / "lib-dynload").glob("*"):
         if item.name.lower().startswith(_DLL_SKIP_PREFIXES):
             item.unlink()

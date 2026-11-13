@@ -64,3 +64,16 @@ def test_cef_runtime_files_are_shipped(name):
     "dauntless", "build.ninja", "CMakeCache.txt", "run2.log", "first-run.log"])
 def test_build_tree_clutter_is_not(name):
     assert not package.is_linux_runtime_file(name)
+
+
+def test_stdlib_keeps_sourceless_bytecode():
+    # Fedora ships encodings/cp1252.pyc with no cp1252.py.
+    names = ["cp1252.pyc", "utf_8.py", "utf_8.pyc", "__pycache__", "x.pyo"]
+    assert package.linux_stdlib_ignore("encodings", names) == {
+        "utf_8.pyc", "__pycache__", "x.pyo"}
+
+
+def test_stdlib_skip_lists_still_apply():
+    names = ["test", "tkinter", "site-packages", "os.py"]
+    assert package.linux_stdlib_ignore("lib", names) == {
+        "test", "tkinter", "site-packages"}
